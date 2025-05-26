@@ -1,16 +1,12 @@
 {
   "name": "Reliabill Dev",
   "dockerFile": "Dockerfile",
-  "workspaceFolder": "/workspaces/reliabill",
-
-  "features": {
-    "ghcr.io/devcontainers/features/docker-in-docker:1": {}
-  },
-
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
   "postCreateCommand": "if [ -f package.json ]; then pnpm install; else echo 'No package.json yet'; fi",
-
-  "forwardPorts": [3000, 3333],
-
+  "forwardPorts": [
+    3000,
+    3333
+  ],
   "customizations": {
     "vscode": {
       "settings": {

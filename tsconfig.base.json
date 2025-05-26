@@ -1,0 +1,19 @@
+{
+  "compileOnSave": false,
+  "compilerOptions": {
+    "rootDir": ".",
+    "baseUrl": ".",
+    "module": "commonjs",
+    "target": "ES2021",
+    "moduleResolution": "node",
+    "lib": ["es2021"],
+    "types": ["node"],
+    "sourceMap": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "paths": {
+      "@reliabill/invoice-core": ["packages/src/index.ts"]
+    }
+  },
+  "exclude": ["node_modules", "tmp"]
+}
