@@ -1,0 +1,21 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: reliabill
+      POSTGRES_PASSWORD: reliabill
+      POSTGRES_DB: reliabill
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+  mail:
+    image: mailhog/mailhog
+    ports:
+      - "8025:8025"
+
+volumes:
+  db_data: {}

@@ -1,0 +1,31 @@
+{
+  "name": "Reliabill Dev",
+  "dockerFile": "Dockerfile",
+  "workspaceFolder": "/workspaces/reliabill",
+
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:1": {}
+  },
+
+  "postCreateCommand": "if [ -f package.json ]; then pnpm install; else echo 'No package.json yet'; fi",
+
+  "forwardPorts": [3000, 3333],
+
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "zsh"
+      },
+      "extensions": [
+        "ms-vscode-remote.remote-containers",
+        "ms-azuretools.vscode-docker",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "nx-console.nx-console",
+        "csholmq.vitest-explorer",
+        "Arjun.swagger-viewer",
+        "eamodio.gitlens"
+      ]
+    }
+  }
+}
