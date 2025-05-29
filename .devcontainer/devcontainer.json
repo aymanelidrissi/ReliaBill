@@ -19,8 +19,10 @@
         "esbenp.prettier-vscode",
         "nx-console.nx-console",
         "csholmq.vitest-explorer",
-        "Arjun.swagger-viewer",
-        "eamodio.gitlens"
+        "eamodio.gitlens",
+        "42Crunch.vscode-openapi",
+        "Prisma.prisma",
+        "nrwl.angular-console"
       ]
     }
   }
