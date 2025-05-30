@@ -6,38 +6,19 @@
   "tags": [],
   "targets": {
     "build": {
-      "executor": "nx:run-commands",
+      "executor": "@nx/nest:build",
+      "outputs": ["{workspaceRoot}/dist/api"],
       "options": {
-        "command": "webpack-cli build",
-        "args": ["node-env=production"]
-      },
-      "configurations": {
-        "development": {
-          "args": ["node-env=development"]
-        }
+        "outputPath": "dist/api",
+        "tsConfig": "api/tsconfig.app.json",
+        "main": "api/src/main.ts",
+        "assets": ["api/src/assets"]
       }
     },
     "serve": {
-      "continuous": true,
-      "executor": "@nx/js:node",
-      "defaultConfiguration": "development",
-      "dependsOn": ["build"],
+      "executor": "nx:run-commands",
       "options": {
-        "buildTarget": "api:build",
-        "runBuildTargetDependencies": false
-      },
-      "configurations": {
-        "development": {
-          "buildTarget": "api:build:development"
-        },
-        "production": {
-          "buildTarget": "api:build:production"
-        }
-      }
-    },
-    "test": {
-      "options": {
-        "passWithNoTests": true
+        "command": "cross-env API_PORT=${API_PORT} ts-node-dev --project api/tsconfig.app.json --respawn --transpile-only --clear --exit-child --watch api/src api/src/main.ts"
       }
     }
   }
