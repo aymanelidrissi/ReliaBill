@@ -2,11 +2,8 @@
   "name": "Reliabill Dev",
   "dockerFile": "Dockerfile",
   "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
-  "postCreateCommand": "chown -R $(id -u):$(id -g) . && if [ -f package.json ]; then pnpm install; else echo 'No package.json yet'; fi",
-  "forwardPorts": [
-    3000,
-    3333
-  ],
+  "postCreateCommand": "pnpm install --frozen-lockfile --prefer-offline",
+  "forwardPorts": [3000, 3333],
   "customizations": {
     "vscode": {
       "settings": {
