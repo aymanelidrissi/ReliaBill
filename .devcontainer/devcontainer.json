@@ -2,7 +2,7 @@
   "name": "Reliabill Dev",
   "dockerFile": "Dockerfile",
   "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
-  "postCreateCommand": "if [ -f package.json ]; then pnpm install; else echo 'No package.json yet'; fi",
+  "postCreateCommand": "chown -R $(id -u):$(id -g) . && if [ -f package.json ]; then pnpm install; else echo 'No package.json yet'; fi",
   "forwardPorts": [
     3000,
     3333
