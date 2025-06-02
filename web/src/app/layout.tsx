@@ -1,8 +1,8 @@
 "use client";
 
 import { SessionProvider } from "next-auth/react";
-import Link from "next/link";            // ← add this
-import "../styles/globals.css";
+import Link from "next/link";
+import "../app/global.css"
 import { UserMenu } from "../components/userMenu";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

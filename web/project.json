@@ -1,31 +1,38 @@
 {
   "name": "web",
   "$schema": "../node_modules/nx/schemas/project-schema.json",
-  "sourceRoot": "web",
   "projectType": "application",
+  "sourceRoot": "web/src",
   "tags": [],
   "targets": {
     "build": {
       "executor": "@nx/next:build",
-      "outputs": ["{workspaceRoot}/dist/web"],
+      "outputs": [
+        "{workspaceRoot}/dist/web"
+      ],
       "options": {
         "outputPath": "dist/web"
+      },
+      "configurations": {
+        "production": {
+          "outputPath": "dist/web"
+        }
       }
     },
     "serve": {
       "executor": "@nx/next:server",
       "defaultConfiguration": "development",
       "options": {
-        "dev": true,
-        "port": "${WEB_PORT}",
         "buildTarget": "web:build",
-        "args": ["--no-turbo"]
+        "dev": true,
+        "port": 4300,
+        "turbo": false
       },
       "configurations": {
         "production": {
+          "buildTarget": "web:build:production",
           "dev": false,
-          "port": "${WEB_PORT}",
-          "buildTarget": "web:build:production"
+          "port": 4300
         }
       }
     }
