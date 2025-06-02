@@ -1,4 +1,3 @@
-// ── tsconfig.base.json ──
 {
   "compileOnSave": false,
   "compilerOptions": {
@@ -7,26 +6,15 @@
     "module": "commonjs",
     "target": "ES2021",
     "moduleResolution": "node",
-    "lib": [
-      "es2021"
-    ],
-    "types": [
-      "node"
-    ],
+    "lib": ["es2021"],
+    "types": ["node"],
     "sourceMap": true,
     "skipLibCheck": true,
     "strict": true,
     "paths": {
-      "@reliabill/invoice-core/prisma": [
-        "packages/invoice-core/src/prisma.ts"
-      ],
-      "@reliabill/invoice-core/*": [
-        "packages/invoice-core/src/*"
-      ]
+      "@reliabill/invoice-core/*": ["packages/invoice-core/src/*"],
+      "@reliabill/invoice-core/prisma": ["packages/invoice-core/src/prisma.ts"]
     }
   },
-  "exclude": [
-    "node_modules",
-    "tmp"
-  ]
+  "exclude": ["node_modules", "tmp"]
 }
