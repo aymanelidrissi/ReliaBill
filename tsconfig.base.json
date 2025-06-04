@@ -12,6 +12,8 @@
     "skipLibCheck": true,
     "strict": true,
     "paths": {
+      "@/*": ["web/src/*"],
+      "@core/*": ["packages/invoice-core/src/*"],
       "@reliabill/invoice-core": ["packages/invoice-core/src/index.ts"],
       "@reliabill/invoice-core/*": ["packages/invoice-core/src/*"],
       "@reliabill/ui": ["packages/ui/src/index.ts"]
