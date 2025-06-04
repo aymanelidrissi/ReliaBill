@@ -12,8 +12,8 @@
     "skipLibCheck": true,
     "strict": true,
     "paths": {
-      "@reliabill/invoice-core/*": ["packages/invoice-core/src/*"],
-      "@reliabill/invoice-core/prisma": ["packages/invoice-core/src/prisma.ts"]
+      "@reliabill/invoice-core": ["packages/invoice-core/src/index.ts"],
+      "@reliabill/invoice-core/*": ["packages/invoice-core/src/*"]
     }
   },
   "exclude": ["node_modules", "tmp"]

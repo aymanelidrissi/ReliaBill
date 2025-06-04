@@ -16,7 +16,8 @@
           "buildDepsName": "build-deps",
           "watchDepsName": "watch-deps"
         }
-      }
+      },
+      "exclude": ["packages/*", "invoice-core/*", "packages/invoice-core/*"]
     },
     {
       "plugin": "@nx/next/plugin",
@@ -46,9 +47,7 @@
       "options": {
         "targetName": "test"
       },
-      "exclude": [
-        "api-e2e/**/*"
-      ]
+      "exclude": ["api-e2e/**/*"]
     },
     {
       "plugin": "@nx/webpack/plugin",
@@ -77,13 +76,8 @@
   "targetDefaults": {
     "@nx/js:tsc": {
       "cache": true,
-      "dependsOn": [
-        "^build"
-      ],
-      "inputs": [
-        "default",
-        "^default"
-      ]
+      "dependsOn": ["^build"],
+      "inputs": ["default", "^default"]
     }
   }
 }
