@@ -1,0 +1,30 @@
+# Node / pnpm
+node_modules/
+pnpm-lock.yaml
+
+# Env & secrets
+.env
+.env.local
+apps/**/.env
+apps/**/.env.local
+
+# Next.js
+.next/
+out/
+.next/cache/
+apps/web/.next/
+apps/web/out/
+
+# Nest.js
+dist/
+apps/api/dist/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
