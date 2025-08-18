@@ -95,7 +95,7 @@ model InvoiceLine {
   description    String
   quantity       Decimal @db.Decimal(10, 2) @default(1)
   unitPrice      Decimal @db.Decimal(12, 2) @default(0)
-  vatRate        Decimal @db.Decimal(4, 2)  @default(0) // e.g. 0, 6, 21
+  vatRate        Decimal @db.Decimal(4, 2)  @default(0)
   lineTotalExcl  Decimal @db.Decimal(12, 2) @default(0)
   lineVat        Decimal @db.Decimal(12, 2) @default(0)
   createdAt      DateTime @default(now())
