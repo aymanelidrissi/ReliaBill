@@ -3,7 +3,8 @@
   "private": true,
   "devDependencies": {
     "concurrently": "^9.2.0",
-    "cross-env": "^10.0.0"
+    "cross-env": "^10.0.0",
+    "dotenv-cli": "^10.0.0"
   },
   "scripts": {
     "dev:web": "cross-env PORT=3000 pnpm --dir apps/web dev",
@@ -11,6 +12,9 @@
     "dev": "concurrently -n WEB,API -c blue,green \"pnpm run dev:web\" \"pnpm run dev:api\"",
     "build:web": "pnpm --dir apps/web build",
     "build:api": "pnpm --dir apps/api build",
-    "build": "pnpm -r build"
+    "build": "pnpm -r build",
+    "db:migrate": "pnpm exec dotenv -e .env -- pnpm dlx prisma migrate dev --schema apps/api/prisma/schema.prisma",
+    "db:studio": "pnpm exec dotenv -e .env -- pnpm dlx prisma studio --schema apps/api/prisma/schema.prisma",
+    "db:generate": "pnpm exec dotenv -e .env -- pnpm dlx prisma generate --schema apps/api/prisma/schema.prisma"
   }
 }
