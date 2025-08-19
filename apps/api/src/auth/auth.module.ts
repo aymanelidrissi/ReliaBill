@@ -8,6 +8,7 @@ import { HASHER } from '../core/ports/hasher.port';
 import { JWT } from '../core/ports/jwt.port';
 import { BcryptHasher } from '../infrastructure/adapters/bcrypt.hasher';
 import { JwtAdapter } from '../infrastructure/adapters/jwt.adapter';
+import { JwtAuthGuard } from './jwt-auth.guard';
 
 @Module({
   imports: [
@@ -24,7 +25,12 @@ import { JwtAdapter } from '../infrastructure/adapters/jwt.adapter';
     AuthService,
     { provide: HASHER, useClass: BcryptHasher },
     { provide: JWT, useClass: JwtAdapter },
+    JwtAuthGuard,
   ],
   controllers: [AuthController],
+  exports: [
+    JwtAuthGuard,
+    { provide: JWT, useClass: JwtAdapter },
+  ],
 })
 export class AuthModule {}
