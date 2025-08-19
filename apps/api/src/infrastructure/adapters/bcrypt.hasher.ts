@@ -1,13 +1,14 @@
-// purpose: concrete hasher; real logic will be added later
 import { Injectable } from '@nestjs/common';
-import { HasherPort } from '../../core/ports/hasher.port';
+import type { HasherPort } from '../../core/ports/hasher.port';
+import * as bcrypt from 'bcryptjs';
 
 @Injectable()
 export class BcryptHasher implements HasherPort {
-  async hash(_plain: string): Promise<string> {
-    throw new Error('NOT_IMPLEMENTED');
+  private readonly rounds = 10;
+  hash(plain: string): Promise<string> {
+    return bcrypt.hash(plain, this.rounds);
   }
-  async compare(_plain: string, _hash: string): Promise<boolean> {
-    throw new Error('NOT_IMPLEMENTED');
+  compare(plain: string, hash: string): Promise<boolean> {
+    return bcrypt.compare(plain, hash);
   }
 }

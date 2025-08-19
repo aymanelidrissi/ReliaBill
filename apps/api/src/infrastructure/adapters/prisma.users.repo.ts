@@ -1,16 +1,20 @@
-// purpose: concrete users repo against Prisma; real logic later
 import { Injectable } from '@nestjs/common';
-import { UsersRepoPort, UserEntity } from '../../core/ports/users.repo.port';
+import type { UsersRepoPort, UserEntity } from '../../core/ports/users.repo.port';
+import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class PrismaUsersRepo implements UsersRepoPort {
-  async findByEmail(_email: string): Promise<UserEntity | null> {
-    throw new Error('NOT_IMPLEMENTED');
+  constructor(private readonly prisma: PrismaService) {}
+
+  findByEmail(email: string): Promise<UserEntity | null> {
+    return this.prisma.user.findUnique({ where: { email } }) as any;
   }
-  async findById(_id: string): Promise<UserEntity | null> {
-    throw new Error('NOT_IMPLEMENTED');
+  findById(id: string): Promise<UserEntity | null> {
+    return this.prisma.user.findUnique({ where: { id } }) as any;
   }
-  async create(_email: string, _passwordHash: string): Promise<UserEntity> {
-    throw new Error('NOT_IMPLEMENTED');
+  create(email: string, passwordHash: string): Promise<UserEntity> {
+    return this.prisma.user.create({
+      data: { email, passwordHash },
+    }) as any;
   }
 }

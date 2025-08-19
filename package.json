@@ -16,5 +16,8 @@
     "db:migrate": "pnpm exec dotenv -e .env -- pnpm dlx prisma migrate dev --schema apps/api/prisma/schema.prisma",
     "db:studio": "pnpm exec dotenv -e .env -- pnpm dlx prisma studio --schema apps/api/prisma/schema.prisma",
     "db:generate": "pnpm exec dotenv -e .env -- pnpm dlx prisma generate --schema apps/api/prisma/schema.prisma"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.2"
   }
 }

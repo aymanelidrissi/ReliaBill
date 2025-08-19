@@ -1,13 +1,14 @@
-// purpose: concrete JWT adapter; real logic later
 import { Injectable } from '@nestjs/common';
-import { JwtPort } from '../../core/ports/jwt.port';
+import type { JwtPort } from '../../core/ports/jwt.port';
+import { JwtService } from '@nestjs/jwt';
 
 @Injectable()
 export class JwtAdapter implements JwtPort {
-  async sign(_payload: Record<string, any>, _expiresIn = '30d'): Promise<string> {
-    throw new Error('NOT_IMPLEMENTED');
+  constructor(private readonly jwt: JwtService) {}
+  sign(payload: Record<string, any>, expiresIn = '30d') {
+    return this.jwt.signAsync(payload, { expiresIn });
   }
-  async verify<T = any>(_token: string): Promise<T> {
-    throw new Error('NOT_IMPLEMENTED');
+  verify<T extends object = any>(token: string) {
+    return this.jwt.verifyAsync<T>(token);
   }
 }
