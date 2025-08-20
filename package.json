@@ -18,6 +18,7 @@
     "db:generate": "pnpm exec dotenv -e .env -- pnpm dlx prisma generate --schema apps/api/prisma/schema.prisma"
   },
   "dependencies": {
+    "@nestjs/mapped-types": "*",
     "bcryptjs": "^3.0.2"
   }
 }
