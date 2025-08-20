@@ -8,14 +8,16 @@
   },
   "scripts": {
     "dev:web": "cross-env PORT=3000 pnpm --dir apps/web dev",
-    "dev:api": "cross-env PORT=3333 pnpm --dir apps/api start:dev",
+    "dev:api": "pnpm exec dotenv -e .env -- pnpm --dir apps/api start:dev",
     "dev": "concurrently -n WEB,API -c blue,green \"pnpm run dev:web\" \"pnpm run dev:api\"",
     "build:web": "pnpm --dir apps/web build",
     "build:api": "pnpm --dir apps/api build",
     "build": "pnpm -r build",
     "db:migrate": "pnpm exec dotenv -e .env -- pnpm dlx prisma migrate dev --schema apps/api/prisma/schema.prisma",
     "db:studio": "pnpm exec dotenv -e .env -- pnpm dlx prisma studio --schema apps/api/prisma/schema.prisma",
-    "db:generate": "pnpm exec dotenv -e .env -- pnpm dlx prisma generate --schema apps/api/prisma/schema.prisma"
+    "db:generate": "pnpm exec dotenv -e .env -- pnpm dlx prisma generate --schema apps/api/prisma/schema.prisma",
+    "login:token": "pnpm exec dotenv -e .env -- node scripts/dev-login.js",
+    "api:me": "pnpm exec dotenv -e .env -- curl http://localhost:3333/auth/me -H 'Authorization: Bearer '"
   },
   "dependencies": {
     "@nestjs/mapped-types": "*",
