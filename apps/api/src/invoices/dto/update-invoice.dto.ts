@@ -1,26 +1,21 @@
-import { IsArray, IsDateString, IsOptional, IsString, IsUUID, IsNumber, Min, IsIn } from 'class-validator';
-
-class InvoiceLineDto {
-  @IsString()
-  description!: string;
-
-  @IsNumber()
-  @Min(0.01)
-  quantity!: number;
-
-  @IsNumber()
-  @Min(0)
-  unitPrice!: number;
-
-  @IsNumber()
-  @Min(0)
-  vatRate!: number;
-}
+import {
+  IsArray,
+  IsDateString,
+  IsOptional,
+  IsString,
+  IsNumber,
+  Min,
+  Matches,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+import { InvoiceLineDto } from './create-invoice.dto';
 
 export class UpdateInvoiceDto {
   @IsOptional()
-  @IsUUID()
-  clientId?: string | null;
+  @IsString()
+  @Matches(/^[a-z][a-z0-9]{24}$/, { message: 'clientId must be a CUID' })
+  clientId?: string;
 
   @IsOptional()
   @IsDateString()
@@ -35,10 +30,8 @@ export class UpdateInvoiceDto {
   currency?: string;
 
   @IsOptional()
-  @IsString()
-  status?: 'DRAFT' | 'READY' | 'SENT' | 'DELIVERED' | 'FAILED';
-
-  @IsOptional()
   @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => InvoiceLineDto)
   lines?: InvoiceLineDto[];
 }
