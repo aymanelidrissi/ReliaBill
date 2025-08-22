@@ -2,9 +2,11 @@
   "name": "relia-bill",
   "private": true,
   "devDependencies": {
+    "archiver": "^7.0.1",
     "concurrently": "^9.2.0",
     "cross-env": "^10.0.0",
-    "dotenv-cli": "^10.0.0"
+    "dotenv-cli": "^10.0.0",
+    "ignore": "^5.3.2"
   },
   "scripts": {
     "dev:web": "cross-env PORT=3000 pnpm --dir apps/web dev",
@@ -17,7 +19,8 @@
     "db:studio": "pnpm exec dotenv -e .env -- pnpm dlx prisma studio --schema apps/api/prisma/schema.prisma",
     "db:generate": "pnpm exec dotenv -e .env -- pnpm dlx prisma generate --schema apps/api/prisma/schema.prisma",
     "login:token": "pnpm exec dotenv -e .env -- node scripts/dev-login.js",
-    "api:me": "pnpm exec dotenv -e .env -- curl http://localhost:3333/auth/me -H 'Authorization: Bearer '"
+    "api:me": "pnpm exec dotenv -e .env -- node scripts/api-me.js",
+    "zip:project": "node ./scripts/zip-project.js"
   },
   "dependencies": {
     "@nestjs/mapped-types": "*",
