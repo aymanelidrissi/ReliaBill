@@ -1,8 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import {
+import type {
   CreateInvoiceData,
-  INVOICES_REPO,
   InvoiceListParams,
   InvoiceListResult,
   InvoiceRecord,
@@ -107,6 +106,9 @@ export class PrismaInvoicesRepo implements InvoicesRepoPort {
       updates.totalVat = data.totals.totalVat;
       updates.totalIncl = data.totals.totalIncl;
     }
+    if (data.pdfPath !== undefined) updates.pdfPath = data.pdfPath;
+    if (data.xmlPath !== undefined) updates.xmlPath = data.xmlPath;
+    if (data.hermesMessageId !== undefined) updates.hermesMessageId = data.hermesMessageId;
 
     const include: any = { lines: true };
 

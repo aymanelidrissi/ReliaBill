@@ -30,3 +30,6 @@ Thumbs.db
 .vscode/
 
 /generated/prisma
+ReliaBill_*.zip
+apps/api/storage/
+.artifacts/

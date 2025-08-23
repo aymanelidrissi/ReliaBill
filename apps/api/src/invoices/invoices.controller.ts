@@ -8,20 +8,28 @@ import {
   Param,
   Query,
   Req,
+  Res,
   UseGuards,
   BadRequestException,
   NotFoundException,
 } from '@nestjs/common';
+import type { Response } from 'express';
+import * as fs from 'fs';
+import * as path from 'path';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto';
 import { InvoiceService } from '../core/services/invoice.service';
+import { InvoiceDocumentsService } from '../core/services/invoice.documents.service';
 import type { InvoiceStatus } from '../core/ports/invoices.repo.port';
 
 @UseGuards(JwtAuthGuard)
 @Controller('invoices')
 export class InvoicesController {
-  constructor(private readonly service: InvoiceService) { }
+  constructor(
+    private readonly service: InvoiceService,
+    private readonly docs: InvoiceDocumentsService,
+  ) {}
 
   @Get()
   async list(
@@ -36,20 +44,10 @@ export class InvoicesController {
   ) {
     const p = Number(page) || 1;
     const l = Math.min(100, Math.max(1, Number(limit) || 10));
-
     const st = this.parseStatus(status);
     const df = this.parseDateOpt(dateFrom, 'dateFrom');
     const dt = this.parseDateOpt(dateTo, 'dateTo');
-
-    return await this.service.list(req.user.id, {
-      page: p,
-      limit: l,
-      query,
-      status: st,
-      clientId,
-      dateFrom: df,
-      dateTo: dt,
-    });
+    return this.service.list(req.user.id, { page: p, limit: l, query, status: st, clientId, dateFrom: df, dateTo: dt });
   }
 
   @Post()
@@ -57,34 +55,20 @@ export class InvoicesController {
     try {
       return await this.service.create(req.user.id, dto);
     } catch (e: any) {
-      if (e?.message === 'NO_COMPANY') {
-        throw new BadRequestException('Create company first');
-      }
-      if (e?.message === 'CLIENT_NOT_FOUND') {
-        throw new BadRequestException('Client not found');
-      }
-      if (e?.message === 'NO_LINES') {
-        throw new BadRequestException('At least one line is required');
-      }
-      if (e?.message === 'BAD_DATES') {
-        throw new BadRequestException('Invalid issueDate or dueDate');
-      }
-      if (e?.message === 'DUE_BEFORE_ISSUE') {
-        throw new BadRequestException('dueDate cannot be before issueDate');
-      }
+      if (e?.message === 'NO_COMPANY') throw new BadRequestException('Create company first');
+      if (e?.message === 'CLIENT_NOT_FOUND') throw new BadRequestException('Client not found');
+      if (e?.message === 'NO_LINES') throw new BadRequestException('At least one line is required');
+      if (e?.message === 'BAD_DATES') throw new BadRequestException('Invalid issueDate or dueDate');
+      if (e?.message === 'DUE_BEFORE_ISSUE') throw new BadRequestException('dueDate cannot be before issueDate');
       throw e;
     }
   }
 
   @Get(':id')
   async get(@Req() req: any, @Param('id') id: string) {
-    try {
-      return await this.service.get(req.user.id, id);
-    } catch (e: any) {
-      if (e?.message === 'NOT_FOUND') throw new NotFoundException('Invoice not found');
-      if (e?.message === 'NO_COMPANY') throw new BadRequestException('Create company first');
-      throw e;
-    }
+    const inv = await this.service.get(req.user.id, id);
+    if (!inv) throw new NotFoundException('Invoice not found');
+    return inv;
   }
 
   @Patch(':id')
@@ -111,23 +95,47 @@ export class InvoicesController {
     }
   }
 
+  @Post(':id/prepare')
+  async prepare(@Req() req: any, @Param('id') id: string) {
+    return this.docs.prepare(req.user.id, id);
+  }
+
+  @Get(':id/download-pdf')
+  async downloadPdf(@Req() req: any, @Param('id') id: string, @Res() res: Response) {
+    const inv = await this.service.get(req.user.id, id);
+    if (!inv?.pdfPath || !fs.existsSync(inv.pdfPath)) throw new NotFoundException('PDF not found');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${path.basename(inv.pdfPath)}"`);
+    fs.createReadStream(inv.pdfPath).pipe(res);
+  }
+
+  @Get(':id/download-xml')
+  async downloadXml(@Req() req: any, @Param('id') id: string, @Res() res: Response) {
+    const inv = await this.service.get(req.user.id, id);
+    if (!inv?.xmlPath || !fs.existsSync(inv.xmlPath)) throw new NotFoundException('XML not found');
+    res.setHeader('Content-Type', 'application/xml');
+    res.setHeader('Content-Disposition', `attachment; filename="${path.basename(inv.xmlPath)}"`);
+    fs.createReadStream(inv.xmlPath).pipe(res);
+  }
+
+  @Get(':id/logs')
+  async logs(@Req() req: any, @Param('id') id: string) {
+    return this.docs.listLogs(req.user.id, id);
+  }
+
+  @Post(':id/send')
+  async send(@Req() req: any, @Param('id') id: string) {
+    return this.docs.send(req.user.id, id);
+  }
+
   private parseStatus(s?: string): InvoiceStatus | undefined {
     if (!s) return undefined;
     const v = s.toUpperCase();
-    const allowed: Record<string, InvoiceStatus> = {
-      DRAFT: 'DRAFT',
-      READY: 'READY',
-      SENT: 'SENT',
-      DELIVERED: 'DELIVERED',
-      FAILED: 'FAILED',
-    } as const;
-    const out = allowed[v];
-    if (!out) {
-      throw new BadRequestException(
-        `Invalid status: "${s}". Allowed: DRAFT, READY, SENT, DELIVERED, FAILED`,
-      );
+    const allowed = ['DRAFT', 'READY', 'SENT', 'DELIVERED', 'FAILED'] as const;
+    if (!(allowed as readonly string[]).includes(v)) {
+      throw new BadRequestException(`Invalid status: "${s}". Allowed: DRAFT, READY, SENT, DELIVERED, FAILED`);
     }
-    return out;
+    return v as InvoiceStatus;
   }
 
   private parseDateOpt(s: string | undefined, field: 'dateFrom' | 'dateTo'): Date | undefined {

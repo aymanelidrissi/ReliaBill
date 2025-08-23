@@ -52,6 +52,9 @@ export type UpdateInvoiceData = {
   status?: InvoiceStatus;
   lines?: Omit<InvoiceLineData, 'lineTotalExcl' | 'lineVat'>[];
   totals?: { totalExcl: number; totalVat: number; totalIncl: number };
+  pdfPath?: string | null;
+  xmlPath?: string | null;
+  hermesMessageId?: string | null;
 };
 
 export type InvoiceListParams = {
