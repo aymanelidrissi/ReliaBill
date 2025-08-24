@@ -13,6 +13,7 @@ import {
   BadRequestException,
   NotFoundException,
 } from '@nestjs/common';
+
 import type { Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -23,13 +24,14 @@ import { InvoiceService } from '../core/services/invoice.service';
 import { InvoiceDocumentsService } from '../core/services/invoice.documents.service';
 import type { InvoiceStatus } from '../core/ports/invoices.repo.port';
 
+
 @UseGuards(JwtAuthGuard)
 @Controller('invoices')
 export class InvoicesController {
   constructor(
     private readonly service: InvoiceService,
     private readonly docs: InvoiceDocumentsService,
-  ) {}
+  ) { }
 
   @Get()
   async list(
@@ -143,5 +145,10 @@ export class InvoicesController {
     const d = new Date(s);
     if (isNaN(+d)) throw new BadRequestException(`Invalid ${field} (expected YYYY-MM-DD or ISO date)`);
     return d;
+  }
+
+  @Get(':id/refresh-status')
+  async refresh(@Req() req: any, @Param('id') id: string) {
+    return this.docs.refreshStatus(req.user.id, id);
   }
 }

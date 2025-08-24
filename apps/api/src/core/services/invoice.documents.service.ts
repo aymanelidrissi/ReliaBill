@@ -114,4 +114,23 @@ export class InvoiceDocumentsService {
 
     return { messageId, status: updated.status };
   }
+
+  async refreshStatus(userId: string, invoiceId: string) {
+    const company = await this.companies.findByUserId(userId);
+    if (!company) throw new BadRequestException('NO_COMPANY');
+
+    const inv = await this.invoices.getById(company.id, invoiceId);
+    if (!inv) throw new BadRequestException('NOT_FOUND');
+    if (!inv.hermesMessageId) throw new BadRequestException('NOT_SENT');
+
+    const res = await this.hermes.status(inv.hermesMessageId);
+    const map = { SENT: 'SENT', DELIVERED: 'DELIVERED', FAILED: 'FAILED' } as const;
+    const next = map[res.status] as InvoiceStatus;
+
+    if (next !== inv.status) {
+      await this.invoices.update(company.id, inv.id, { status: next });
+      await this.logs.create({ invoiceId: inv.id, kind: 'STATUS', message: `Status ${next}` });
+    }
+    return { messageId: res.messageId, status: next };
+  }
 }
