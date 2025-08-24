@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { InvoicesController } from './invoices.controller';
+import { DeliveryController } from './delivery.controller';
 import { InvoiceService } from '../core/services/invoice.service';
 import { InvoiceDocumentsService } from '../core/services/invoice.documents.service';
 import { INVOICES_REPO } from '../core/ports/invoices.repo.port';
@@ -19,7 +20,7 @@ import { CompaniesModule } from '../companies/companies.module';
 
 @Module({
   imports: [AuthModule, CompaniesModule],
-  controllers: [InvoicesController],
+  controllers: [InvoicesController, DeliveryController],
   providers: [
     InvoiceService,
     InvoiceDocumentsService,
