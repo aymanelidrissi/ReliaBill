@@ -31,13 +31,59 @@ function lineXml(ln: any, i: number, cur: string) {
   </cac:InvoiceLine>`.trim();
 }
 
+function buildTaxXml(lines: any[], cur: string) {
+  const byRate = new Map<number, { taxable: number; tax: number }>();
+  for (const ln of lines || []) {
+    const r = Number(ln.vatRate) || 0;
+    const a = byRate.get(r) || { taxable: 0, tax: 0 };
+    a.taxable += Number(ln.lineTotalExcl) || 0;
+    a.tax += Number(ln.lineVat) || 0;
+    byRate.set(r, a);
+  }
+  const subs = Array.from(byRate.entries())
+    .map(([rate, v]) => `
+  <cac:TaxSubtotal>
+    <cbc:TaxableAmount currencyID="${cur}">${Number(v.taxable)}</cbc:TaxableAmount>
+    <cbc:TaxAmount currencyID="${cur}">${Number(v.tax)}</cbc:TaxAmount>
+    <cac:TaxCategory>
+      <cbc:Percent>${rate}</cbc:Percent>
+      <cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme>
+    </cac:TaxCategory>
+  </cac:TaxSubtotal>`.trim())
+    .join('\n');
+  const total = Array.from(byRate.values()).reduce((s, v) => s + Number(v.tax), 0);
+  return `
+  <cac:TaxTotal>
+    <cbc:TaxAmount currencyID="${cur}">${Number(total)}</cbc:TaxAmount>
+${subs ? subs : ''}
+  </cac:TaxTotal>`.trim();
+}
+
+function paymentMeansXml(company: any) {
+  const iban = company?.iban;
+  const bic = company?.bic;
+  if (!iban) return '';
+  return `
+  <cac:PaymentMeans>
+    <cbc:PaymentMeansCode>31</cbc:PaymentMeansCode>
+    <cac:PayeeFinancialAccount>
+      <cbc:ID>${esc(iban)}</cbc:ID>
+      ${bic ? `<cac:FinancialInstitutionBranch><cac:FinancialInstitution><cbc:ID>${esc(bic)}</cbc:ID></cac:FinancialInstitution></cac:FinancialInstitutionBranch>` : ''}
+    </cac:PayeeFinancialAccount>
+  </cac:PaymentMeans>`.trim();
+}
+
 function buildUblXml(invoice: any, company: any, client: any) {
   const cur = esc(invoice.currency || 'EUR');
   const linesXml = (invoice.lines || []).map((ln: any, i: number) => lineXml(ln, i, cur)).join('\n');
+  const taxXml = buildTaxXml(invoice.lines || [], cur);
+  const payXml = paymentMeansXml(company);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
          xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
          xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
+  <cbc:CustomizationID>urn:cen.eu:en16931:2017</cbc:CustomizationID>
+  <cbc:ProfileID>urn:fdc:peppol.eu:2017:poacc:billing:3.0</cbc:ProfileID>
   <cbc:ID>${esc(invoice.number)}</cbc:ID>
   <cbc:IssueDate>${ymdCompact(invoice.issueDate)}</cbc:IssueDate>
   <cbc:DueDate>${ymdCompact(invoice.dueDate)}</cbc:DueDate>
@@ -54,13 +100,15 @@ function buildUblXml(invoice: any, company: any, client: any) {
       ${client.vat ? `<cac:PartyTaxScheme><cbc:CompanyID>${esc(client.vat)}</cbc:CompanyID></cac:PartyTaxScheme>` : ''}
     </cac:Party>
   </cac:AccountingCustomerParty>
+${taxXml}
   <cac:LegalMonetaryTotal>
     <cbc:LineExtensionAmount currencyID="${cur}">${invoice.totalExcl}</cbc:LineExtensionAmount>
     <cbc:TaxExclusiveAmount currencyID="${cur}">${invoice.totalExcl}</cbc:TaxExclusiveAmount>
     <cbc:TaxInclusiveAmount currencyID="${cur}">${invoice.totalIncl}</cbc:TaxInclusiveAmount>
     <cbc:PayableAmount currencyID="${cur}">${invoice.totalIncl}</cbc:PayableAmount>
   </cac:LegalMonetaryTotal>
-  ${linesXml}
+${payXml}
+${linesXml}
 </Invoice>`.trim();
 }
 
