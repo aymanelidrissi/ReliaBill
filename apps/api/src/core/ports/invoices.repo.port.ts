@@ -1,5 +1,3 @@
-import { InjectionToken } from '@nestjs/common';
-
 export const INVOICES_REPO = Symbol('INVOICES_REPO');
 
 export type InvoiceStatus = 'DRAFT' | 'READY' | 'SENT' | 'DELIVERED' | 'FAILED';
@@ -78,6 +76,7 @@ export interface InvoicesRepoPort {
   countForYear(companyId: string, year: number): Promise<number>;
   list(companyId: string, params: InvoiceListParams): Promise<InvoiceListResult>;
   getById(companyId: string, id: string): Promise<InvoiceRecord | null>;
+  getByHermesMessageId(messageId: string): Promise<InvoiceRecord | null>;
   create(companyId: string, data: CreateInvoiceData): Promise<InvoiceRecord>;
   update(companyId: string, id: string, data: UpdateInvoiceData): Promise<InvoiceRecord>;
   delete(companyId: string, id: string): Promise<void>;

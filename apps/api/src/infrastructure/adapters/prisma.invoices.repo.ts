@@ -65,6 +65,14 @@ export class PrismaInvoicesRepo implements InvoicesRepoPort {
     return inv ? mapInvoice(inv) : null;
   }
 
+  async getByHermesMessageId(messageId: string): Promise<InvoiceRecord | null> {
+    const inv = await this.prisma.invoice.findFirst({
+      where: { hermesMessageId: messageId },
+      include: { lines: true },
+    });
+    return inv ? mapInvoice(inv) : null;
+  }
+
   async create(companyId: string, data: CreateInvoiceData): Promise<InvoiceRecord> {
     const created = await this.prisma.invoice.create({
       data: {
