@@ -3,6 +3,7 @@
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
+const { execSync } = require('child_process');
 const archiver = require('archiver');
 const ignore = require('ignore');
 
@@ -16,17 +17,20 @@ const ignore = require('ignore');
     const outName = sanitizeZipName(desiredName || `ReliaBill_${stamp}.zip`);
     const outPath = path.join(root, outName);
 
-    const zipignorePath = path.join(root, '.zipignore');
-    const patterns = await readZipIgnore(zipignorePath);
-
-    patterns.push(outName);
-
+    const patterns = await loadIgnorePatterns(root, outName);
     const ig = ignore().add(patterns);
 
-    const files = await listFilesFiltered(root, ig, outName);
+    let files = [];
+    if (fs.existsSync(path.join(root, '.git'))) {
+      const raw = execSync('git ls-files -z', { cwd: root });
+      files = raw.toString('utf8').split('\0').filter(Boolean);
+      files = files.filter((rel) => rel !== outName && !ig.ignores(rel));
+    } else {
+      files = await listFilesFiltered(root, ig, outName);
+    }
 
     if (files.length === 0) {
-      console.error('No files to archive after applying .zipignore rules.');
+      console.error('No files to archive after applying ignore rules.');
       process.exit(2);
     }
 
@@ -41,7 +45,6 @@ const ignore = require('ignore');
     process.exit(1);
   }
 })();
-
 
 async function resolveRepoRoot(start) {
   let dir = start;
@@ -62,34 +65,89 @@ function ts() {
 }
 
 function sanitizeZipName(name) {
-  const base = name.replace(/[/\\]/g, '');
+  const base = String(name).replace(/[/\\]/g, '');
   return base.endsWith('.zip') ? base : `${base}.zip`;
 }
 
-async function readZipIgnore(filePath) {
-  try {
-    const raw = await fsp.readFile(filePath, 'utf8');
-    const lines = raw
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter((l) => l && !l.startsWith('#'));
-    if (!lines.some((l) => l === '!.env.example')) lines.push('!.env.example');
-    return lines;
-  } catch {
-    return [
-      'node_modules/',
-      '.git/',
-      '.env',
-      '.env.*',
-      '!.env.example',
-      '**/.next/',
-      '**/dist/',
-      '**/build/',
-      '**/*.zip',
-      '.DS_Store',
-      'Thumbs.db',
-    ];
+async function loadIgnorePatterns(root, outName) {
+  const base = [
+    // bloat/build
+    'node_modules/**',
+    '.pnpm/**',
+    '.pnpm-store/**',
+    '**/.next/**',
+    '**/dist/**',
+    '**/build/**',
+    '**/out/**',
+    '**/.turbo/**',
+    '**/.cache/**',
+    '**/.vercel/**',
+    '**/.sst/**',
+    '**/.serverless/**',
+
+    // vcs/ide
+    '.git/**',
+    '.github/**',
+    '.githooks/**',
+    '.gitlab/**',
+    '.vscode/**',
+    '.idea/**',
+
+    // env/logs/tmp
+    '.env',
+    '.env.*',
+    '!/.env.example',
+    '*.local',
+    '*.pid',
+    '*.swp',
+    '*.tmp',
+    '*.log',
+    'pnpm-debug.log',
+
+    // tests/coverage
+    'coverage/**',
+    '**/__tests__/**',
+    '**/__mocks__/**',
+    '**/*.test.*',
+    '**/*.spec.*',
+
+    // misc
+    'tmp/**',
+    'sandbox/**',
+    '**/*.zip',
+
+    'storage/**',
+  ];
+
+  const candidates = ['.archiveignore', '.zipignore'];
+  let user = [];
+  for (const file of candidates) {
+    const p = path.join(root, file);
+    if (fs.existsSync(p)) {
+      try {
+        let raw = await fsp.readFile(p, 'utf8');
+        raw = raw.replace(/^\uFEFF/, '');
+        user = raw
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter((l) => l && !l.startsWith('#'));
+        break;
+      } catch {
+
+      }
+    }
   }
+
+  const patterns = [...base, ...user];
+
+  patterns.push(outName);
+  patterns.push(`./${outName}`);
+
+  if (!patterns.some((p) => p.replace(/^!\/*/, '') === '.env.example')) {
+    patterns.push('!/.env.example');
+  }
+
+  return patterns;
 }
 
 async function listFilesFiltered(root, ig, outName) {
@@ -101,7 +159,6 @@ async function listFilesFiltered(root, ig, outName) {
     const entries = await fsp.readdir(absDir, { withFileTypes: true });
     for (const ent of entries) {
       const rel = path.posix.join(relDir, ent.name.replace(/\\/g, '/'));
-
       if (rel === outName) continue;
 
       if (ent.isDirectory()) {
@@ -122,9 +179,7 @@ function zipFiles(root, files, outPath) {
 
     output.on('close', resolve);
     output.on('error', reject);
-    archive.on('warning', (err) => {
-      console.warn('archive warning:', err.message);
-    });
+    archive.on('warning', (err) => console.warn('archive warning:', err.message));
     archive.on('error', reject);
 
     archive.pipe(output);

@@ -1,0 +1,51 @@
+# Node / pnpm
+node_modules/
+.pnpm/
+.pnpm-store/
+**/.turbo/
+**/.next/
+**/out/
+**/.cache/
+**/dist/
+**/build/
+**/.vercel/
+**/.sst/
+**/.serverless/
+
+# Env / logs / temp
+.env
+.env.*
+!.env.example
+*.local
+*.pid
+*.swp
+*.tmp
+*.log
+pnpm-debug.log
+
+# Git & IDE
+.git/
+.github/
+.githooks/
+.gitlab/
+.gitignore
+.gitattributes
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Tests & coverage
+coverage/
+**/__tests__/
+**/__mocks__/
+**/*.test.*
+**/*.spec.*
+
+# Generated documents
+storage/
+
+# Misc
+tmp/
+sandbox/
+**/*.zip
