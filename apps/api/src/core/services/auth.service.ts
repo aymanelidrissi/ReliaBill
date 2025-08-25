@@ -1,8 +1,6 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, BadRequestException } from '@nestjs/common';
 import { HASHER, JWT, USERS_REPO } from '../ports';
-import type { UsersRepoPort } from '../ports';
-import type { HasherPort } from '../ports';
-import type { JwtPort } from '../ports';
+import type { UsersRepoPort, HasherPort, JwtPort } from '../ports';
 
 @Injectable()
 export class AuthService {
@@ -33,5 +31,16 @@ export class AuthService {
     const user = await this.users.findById(userId);
     if (!user) throw new Error('NOT_FOUND');
     return { id: user.id, email: user.email, createdAt: user.createdAt };
+  }
+
+  async register(email: string, password: string) {
+    const existing = await this.users.findByEmail(email);
+    if (existing) throw new BadRequestException('EMAIL_TAKEN');
+
+    const passwordHash = await this.hasher.hash(password);
+    const user = await this.users.create(email, passwordHash);
+
+    const token = await this.jwt.sign({ sub: user.id, email: user.email }, '30d');
+    return { id: user.id, email: user.email, token };
   }
 }
