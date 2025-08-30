@@ -1,165 +1,184 @@
-import { Injectable } from '@nestjs/common';
-import { DocGenPort } from '../../core/ports/docgen.port';
-import * as fs from 'fs';
-import * as path from 'path';
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
+import * as fs from 'fs/promises'
+import * as path from 'path'
+import { InvoiceDocModel, DocParty, DocLine, DocTaxSubtotal } from '../../core/models/invoice-doc.model'
+import { round2, toFixed2 } from '../../core/utils/ammounts'
 
-function ensureDir(p: string) {
-  fs.mkdirSync(p, { recursive: true });
+function xmlEscape(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;')
 }
 
-function esc(s: string) {
-  return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-function ymd(d: string) {
-  return new Date(d).toISOString().slice(0, 10);
-}
-
-function ymdCompact(d: string) {
-  return ymd(d).replace(/-/g, '');
-}
-
-function lineXml(ln: any, i: number, cur: string) {
-  return `
-  <cac:InvoiceLine>
-    <cbc:ID>${i + 1}</cbc:ID>
-    <cbc:InvoicedQuantity>${ln.quantity}</cbc:InvoicedQuantity>
-    <cbc:LineExtensionAmount currencyID="${cur}">${ln.lineTotalExcl}</cbc:LineExtensionAmount>
-    <cac:Item><cbc:Description>${esc(ln.description || '')}</cbc:Description></cac:Item>
-    <cac:Price><cbc:PriceAmount currencyID="${cur}">${ln.unitPrice}</cbc:PriceAmount></cac:Price>
-  </cac:InvoiceLine>`.trim();
-}
-
-function buildTaxXml(lines: any[], cur: string) {
-  const byRate = new Map<number, { taxable: number; tax: number }>();
-  for (const ln of lines || []) {
-    const r = Number(ln.vatRate) || 0;
-    const a = byRate.get(r) || { taxable: 0, tax: 0 };
-    a.taxable += Number(ln.lineTotalExcl) || 0;
-    a.tax += Number(ln.lineVat) || 0;
-    byRate.set(r, a);
+function normParty(p: any, fallbackName: string): DocParty {
+  return {
+    name: p?.name || p?.legalName || fallbackName,
+    vat: p?.vat ?? null,
+    street: p?.street ?? null,
+    city: p?.city ?? null,
+    postalCode: p?.postalCode ?? null,
+    countryCode: p?.country || p?.countryCode || null,
+    email: p?.email ?? null,
+    iban: p?.iban ?? null,
+    bic: p?.bic ?? null
   }
-  const subs = Array.from(byRate.entries())
-    .map(([rate, v]) => `
-  <cac:TaxSubtotal>
-    <cbc:TaxableAmount currencyID="${cur}">${Number(v.taxable)}</cbc:TaxableAmount>
-    <cbc:TaxAmount currencyID="${cur}">${Number(v.tax)}</cbc:TaxAmount>
-    <cac:TaxCategory>
-      <cbc:Percent>${rate}</cbc:Percent>
-      <cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme>
-    </cac:TaxCategory>
-  </cac:TaxSubtotal>`.trim())
-    .join('\n');
-  const total = Array.from(byRate.values()).reduce((s, v) => s + Number(v.tax), 0);
-  return `
-  <cac:TaxTotal>
-    <cbc:TaxAmount currencyID="${cur}">${Number(total)}</cbc:TaxAmount>
-${subs ? subs : ''}
-  </cac:TaxTotal>`.trim();
 }
 
-function paymentMeansXml(company: any) {
-  const iban = company?.iban;
-  const bic = company?.bic;
-  if (!iban) return '';
-  return `
-  <cac:PaymentMeans>
-    <cbc:PaymentMeansCode>31</cbc:PaymentMeansCode>
-    <cac:PayeeFinancialAccount>
-      <cbc:ID>${esc(iban)}</cbc:ID>
-      ${bic ? `<cac:FinancialInstitutionBranch><cac:FinancialInstitution><cbc:ID>${esc(bic)}</cbc:ID></cac:FinancialInstitution></cac:FinancialInstitutionBranch>` : ''}
-    </cac:PayeeFinancialAccount>
-  </cac:PaymentMeans>`.trim();
-}
-
-function buildUblXml(invoice: any, company: any, client: any) {
-  const cur = esc(invoice.currency || 'EUR');
-  const linesXml = (invoice.lines || []).map((ln: any, i: number) => lineXml(ln, i, cur)).join('\n');
-  const taxXml = buildTaxXml(invoice.lines || [], cur);
-  const payXml = paymentMeansXml(company);
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
-         xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
-         xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
-  <cbc:CustomizationID>urn:cen.eu:en16931:2017</cbc:CustomizationID>
-  <cbc:ProfileID>urn:fdc:peppol.eu:2017:poacc:billing:3.0</cbc:ProfileID>
-  <cbc:ID>${esc(invoice.number)}</cbc:ID>
-  <cbc:IssueDate>${ymdCompact(invoice.issueDate)}</cbc:IssueDate>
-  <cbc:DueDate>${ymdCompact(invoice.dueDate)}</cbc:DueDate>
-  <cbc:DocumentCurrencyCode>${cur}</cbc:DocumentCurrencyCode>
-  <cac:AccountingSupplierParty>
-    <cac:Party>
-      <cac:PartyName><cbc:Name>${esc(company.legalName || '')}</cbc:Name></cac:PartyName>
-      ${company.vat ? `<cac:PartyTaxScheme><cbc:CompanyID>${esc(company.vat)}</cbc:CompanyID></cac:PartyTaxScheme>` : ''}
-    </cac:Party>
-  </cac:AccountingSupplierParty>
-  <cac:AccountingCustomerParty>
-    <cac:Party>
-      <cac:PartyName><cbc:Name>${esc(client.name || '')}</cbc:Name></cac:PartyName>
-      ${client.vat ? `<cac:PartyTaxScheme><cbc:CompanyID>${esc(client.vat)}</cbc:CompanyID></cac:PartyTaxScheme>` : ''}
-    </cac:Party>
-  </cac:AccountingCustomerParty>
-${taxXml}
-  <cac:LegalMonetaryTotal>
-    <cbc:LineExtensionAmount currencyID="${cur}">${invoice.totalExcl}</cbc:LineExtensionAmount>
-    <cbc:TaxExclusiveAmount currencyID="${cur}">${invoice.totalExcl}</cbc:TaxExclusiveAmount>
-    <cbc:TaxInclusiveAmount currencyID="${cur}">${invoice.totalIncl}</cbc:TaxInclusiveAmount>
-    <cbc:PayableAmount currencyID="${cur}">${invoice.totalIncl}</cbc:PayableAmount>
-  </cac:LegalMonetaryTotal>
-${payXml}
-${linesXml}
-</Invoice>`.trim();
-}
-
-@Injectable()
-export class NodeDocGenAdapter implements DocGenPort {
-  async renderPdf({ invoice, company, client, outPath }: any) {
-    ensureDir(path.dirname(outPath));
-    const pdf = await PDFDocument.create();
-    const page = pdf.addPage([595.28, 841.89]);
-    const font = await pdf.embedFont(StandardFonts.Helvetica);
-    const draw = (text: string, x: number, y: number, size = 12) =>
-      page.drawText(String(text ?? ''), { x, y, size, font, color: rgb(0, 0, 0) });
-
-    draw(company.legalName || 'Company', 40, 800, 16);
-    if (company.vat) draw(`VAT: ${company.vat}`, 40, 780);
-    if (company.street) draw(`${company.street}, ${company.postalCode ?? ''} ${company.city ?? ''}`, 40, 765);
-
-    draw(`Invoice ${invoice.number}`, 400, 800, 16);
-    draw(`Issue: ${ymd(invoice.issueDate)}`, 400, 780);
-    draw(`Due:   ${ymd(invoice.dueDate)}`, 400, 765);
-
-    draw('Bill To:', 40, 730, 12);
-    draw(client.name || 'Client', 40, 715);
-    if (client.vat) draw(`VAT: ${client.vat}`, 40, 700);
-    if (client.street) draw(`${client.street}, ${client.postalCode ?? ''} ${client.city ?? ''}`, 40, 685);
-
-    let y = 650;
-    draw('Description', 40, y); draw('Qty', 320, y); draw('Unit', 360, y); draw('VAT%', 420, y); draw('Line', 470, y);
-    y -= 15;
-    for (const ln of invoice.lines || []) {
-      draw(`${ln.description}`, 40, y);
-      draw(`${ln.quantity}`, 320, y);
-      draw(`${ln.unitPrice}`, 360, y);
-      draw(`${ln.vatRate}`, 420, y);
-      draw(`${ln.lineTotalExcl}`, 470, y);
-      y -= 15;
-      if (y < 100) break;
-    }
-
-    y -= 10;
-    draw(`Total excl: ${invoice.totalExcl} ${invoice.currency || 'EUR'}`, 400, y); y -= 15;
-    draw(`VAT:        ${invoice.totalVat}`, 400, y); y -= 15;
-    draw(`Total incl: ${invoice.totalIncl}`, 400, y);
-
-    const bytes = await pdf.save();
-    fs.writeFileSync(outPath, bytes);
+function toModel(input: any): InvoiceDocModel {
+  if (input && input.number && input.lines && input.supplier && input.customer) return input as InvoiceDocModel
+  const inv = input?.invoice ?? input
+  const supplierRaw = input?.supplier ?? input?.company ?? {}
+  const customerRaw = input?.customer ?? input?.client ?? {}
+  const supplier = normParty(supplierRaw, 'Supplier')
+  const customer = normParty(customerRaw, 'Customer')
+  const lines: DocLine[] = (inv?.lines || []).map((l: any, idx: number) => ({
+    id: String(idx + 1),
+    description: l.description,
+    quantity: Number(l.quantity),
+    unitPrice: Number(l.unitPrice),
+    vatRate: Number(l.vatRate),
+    lineTotalExcl: Number(l.lineTotalExcl ?? round2(Number(l.quantity) * Number(l.unitPrice))),
+    lineVat: Number(l.lineVat ?? round2((Number(l.lineTotalExcl ?? round2(Number(l.quantity) * Number(l.unitPrice))) * Number(l.vatRate)) / 100))
+  }))
+  const byRate = new Map<number, { taxable: number; tax: number }>()
+  for (const l of lines) {
+    const r = Number(l.vatRate)
+    const cur = byRate.get(r) || { taxable: 0, tax: 0 }
+    cur.taxable = round2(cur.taxable + l.lineTotalExcl)
+    cur.tax = round2(cur.tax + l.lineVat)
+    byRate.set(r, cur)
   }
+  const taxSubtotals: DocTaxSubtotal[] = Array.from(byRate.entries()).map(([rate, v]) => ({ rate, taxable: v.taxable, tax: v.tax }))
+  const totalExcl = round2(lines.reduce((a, b) => a + b.lineTotalExcl, 0))
+  const totalVat = round2(lines.reduce((a, b) => a + b.lineVat, 0))
+  const totalIncl = round2(totalExcl + totalVat)
+  return {
+    id: inv.id,
+    number: inv.number,
+    issueDate: inv.issueDate,
+    dueDate: inv.dueDate,
+    currency: inv.currency || 'EUR',
+    supplier,
+    customer,
+    lines,
+    totalExcl,
+    totalVat,
+    totalIncl,
+    taxSubtotals
+  }
+}
 
-  async renderUbl({ invoice, company, client, outPath }: any) {
-    ensureDir(path.dirname(outPath));
-    const xml = buildUblXml(invoice, company, client);
-    fs.writeFileSync(outPath, xml);
+function buildUBL(doc: InvoiceDocModel): string {
+  const ns = [
+    'xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"',
+    'xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"',
+    'xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"'
+  ].join(' ')
+  const party = (role: 'AccountingSupplierParty' | 'AccountingCustomerParty', p: DocParty) => {
+    const addr = [
+      p.street ? `<cbc:StreetName>${xmlEscape(p.street)}</cbc:StreetName>` : '',
+      p.postalCode ? `<cbc:PostalZone>${xmlEscape(p.postalCode)}</cbc:PostalZone>` : '',
+      p.city ? `<cbc:CityName>${xmlEscape(p.city)}</cbc:CityName>` : '',
+      p.countryCode ? `<cac:Country><cbc:IdentificationCode>${xmlEscape(p.countryCode)}</cbc:IdentificationCode></cac:Country>` : ''
+    ].join('')
+    const tax = p.vat ? `<cac:PartyTaxScheme><cbc:CompanyID>${xmlEscape(p.vat)}</cbc:CompanyID><cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:PartyTaxScheme>` : ''
+    const legal = p.name ? `<cac:PartyLegalEntity><cbc:RegistrationName>${xmlEscape(p.name)}</cbc:RegistrationName></cac:PartyLegalEntity>` : ''
+    return `<cac:${role}><cac:Party>${tax}${legal}${addr ? `<cac:PostalAddress>${addr}</cac:PostalAddress>` : ''}</cac:Party></cac:${role}>`
+  }
+  const paymentMeans = doc.supplier.iban
+    ? `<cac:PaymentMeans><cbc:PaymentMeansCode>31</cbc:PaymentMeansCode><cac:PayeeFinancialAccount><cbc:ID>${xmlEscape(doc.supplier.iban || '')}</cbc:ID>${doc.supplier.bic ? `<cac:FinancialInstitutionBranch><cac:FinancialInstitution><cbc:ID>${xmlEscape(doc.supplier.bic)}</cbc:ID></cac:FinancialInstitution></cac:FinancialInstitutionBranch>` : ''}</cac:PayeeFinancialAccount></cac:PaymentMeans>`
+    : ''
+  const taxSub = doc.taxSubtotals
+    .map(t => `<cac:TaxSubtotal><cbc:TaxableAmount currencyID="${xmlEscape(doc.currency)}">${toFixed2(t.taxable)}</cbc:TaxableAmount><cbc:TaxAmount currencyID="${xmlEscape(doc.currency)}">${toFixed2(t.tax)}</cbc:TaxAmount><cac:TaxCategory><cbc:ID>S</cbc:ID><cbc:Percent>${toFixed2(t.rate)}</cbc:Percent><cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:TaxCategory></cac:TaxSubtotal>`)
+    .join('')
+  const lines = doc.lines
+    .map((l, i) => {
+      return `<cac:InvoiceLine>
+<cbc:ID>${i + 1}</cbc:ID>
+<cbc:InvoicedQuantity unitCode="H87">${toFixed2(l.quantity)}</cbc:InvoicedQuantity>
+<cbc:LineExtensionAmount currencyID="${xmlEscape(doc.currency)}">${toFixed2(l.lineTotalExcl)}</cbc:LineExtensionAmount>
+<cac:Item><cbc:Name>${xmlEscape(l.description)}</cbc:Name><cac:ClassifiedTaxCategory><cbc:ID>S</cbc:ID><cbc:Percent>${toFixed2(l.vatRate)}</cbc:Percent><cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:ClassifiedTaxCategory></cac:Item>
+<cac:Price><cbc:PriceAmount currencyID="${xmlEscape(doc.currency)}">${toFixed2(l.unitPrice)}</cbc:PriceAmount></cac:Price>
+</cac:InvoiceLine>`
+    })
+    .join('')
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<Invoice ${ns}>
+<cbc:CustomizationID>urn:cen.eu:en16931:2017</cbc:CustomizationID>
+<cbc:ProfileID>urn:fdc:peppol.eu:2017:poacc:billing:3.0</cbc:ProfileID>
+<cbc:ID>${xmlEscape(doc.number)}</cbc:ID>
+<cbc:IssueDate>${xmlEscape(doc.issueDate.substring(0,10))}</cbc:IssueDate>
+<cbc:DueDate>${xmlEscape(doc.dueDate.substring(0,10))}</cbc:DueDate>
+<cbc:InvoiceTypeCode>380</cbc:InvoiceTypeCode>
+<cbc:DocumentCurrencyCode>${xmlEscape(doc.currency)}</cbc:DocumentCurrencyCode>
+${party('AccountingSupplierParty', doc.supplier)}
+${party('AccountingCustomerParty', doc.customer)}
+${paymentMeans}
+<cac:TaxTotal>
+  <cbc:TaxAmount currencyID="${xmlEscape(doc.currency)}">${toFixed2(doc.totalVat)}</cbc:TaxAmount>
+  ${taxSub}
+</cac:TaxTotal>
+<cac:LegalMonetaryTotal>
+  <cbc:LineExtensionAmount currencyID="${xmlEscape(doc.currency)}">${toFixed2(doc.totalExcl)}</cbc:LineExtensionAmount>
+  <cbc:TaxExclusiveAmount currencyID="${xmlEscape(doc.currency)}">${toFixed2(doc.totalExcl)}</cbc:TaxExclusiveAmount>
+  <cbc:TaxInclusiveAmount currencyID="${xmlEscape(doc.currency)}">${toFixed2(doc.totalIncl)}</cbc:TaxInclusiveAmount>
+  <cbc:PayableAmount currencyID="${xmlEscape(doc.currency)}">${toFixed2(doc.totalIncl)}</cbc:PayableAmount>
+</cac:LegalMonetaryTotal>
+${lines}
+</Invoice>`
+  return xml
+}
+
+async function buildPDF(doc: InvoiceDocModel): Promise<Uint8Array> {
+  const pdf = await PDFDocument.create()
+  const page = pdf.addPage([595, 842])
+  const font = await pdf.embedFont(StandardFonts.Helvetica)
+  const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold)
+  const draw = (text: string, x: number, y: number, bold = false, size = 11) => {
+    page.drawText(text, { x, y, size, font: bold ? fontBold : font, color: rgb(0, 0, 0) })
+  }
+  let y = 800
+  draw('Invoice', 50, y, true, 16); y -= 20
+  draw(doc.number, 50, y); y -= 14
+  draw(`Issue: ${doc.issueDate.substring(0,10)}  Due: ${doc.dueDate.substring(0,10)}`, 50, y); y -= 24
+  draw('From', 50, y, true); draw('To', 300, y, true); y -= 14
+  const s = doc.supplier; const c = doc.customer
+  draw(s.name || '', 50, y); draw(c.name || '', 300, y); y -= 12
+  draw(`${s.street || ''}`, 50, y); draw(`${c.street || ''}`, 300, y); y -= 12
+  draw(`${s.postalCode || ''} ${s.city || ''} ${s.countryCode || ''}`, 50, y); draw(`${c.postalCode || ''} ${c.city || ''} ${c.countryCode || ''}`, 300, y); y -= 12
+  draw(`VAT: ${s.vat || ''}`, 50, y); draw(`VAT: ${c.vat || ''}`, 300, y); y -= 20
+  draw('Qty', 50, y, true); draw('Description', 90, y, true); draw('Unit', 360, y, true); draw('VAT%', 430, y, true); draw('Line Excl', 480, y, true); y -= 12
+  doc.lines.forEach(l => {
+    draw(toFixed2(l.quantity), 50, y)
+    draw(l.description, 90, y)
+    draw(toFixed2(l.unitPrice), 360, y)
+    draw(toFixed2(l.vatRate), 430, y)
+    draw(toFixed2(l.lineTotalExcl), 480, y)
+    y -= 12
+  })
+  y -= 8
+  draw('Tax breakdown', 50, y, true); y -= 12
+  doc.taxSubtotals.forEach(t => { draw(`${toFixed2(t.rate)}% on ${toFixed2(t.taxable)} = ${toFixed2(t.tax)}`, 50, y); y -= 12 })
+  y -= 8
+  draw(`Subtotal: ${toFixed2(doc.totalExcl)}`, 400, y); y -= 12
+  draw(`VAT: ${toFixed2(doc.totalVat)}`, 400, y); y -= 12
+  draw(`Total: ${toFixed2(doc.totalIncl)}`, 400, y, true); y -= 20
+  if (s.iban) draw(`Payment IBAN: ${s.iban}${s.bic ? `  BIC: ${s.bic}` : ''}`, 50, y)
+  return await pdf.save()
+}
+
+export class NodeDocGenAdapter {
+  async generate(input: any): Promise<{ pdfPath: string; xmlPath: string }> {
+    const doc = toModel(input)
+    const root = process.env.DOCS_DIR || 'storage'
+    const dir = path.join(root, 'invoices', doc.id)
+    await fs.mkdir(dir, { recursive: true })
+    const xml = buildUBL(doc)
+    const xmlPath = path.join(dir, `${doc.id}.xml`)
+    await fs.writeFile(xmlPath, xml, 'utf8')
+    const pdfBytes = await buildPDF(doc)
+    const pdfPath = path.join(dir, `${doc.id}.pdf`)
+    await fs.writeFile(pdfPath, pdfBytes)
+    const relXml = path.relative(process.cwd(), xmlPath).replace(/\\/g, '/')
+    const relPdf = path.relative(process.cwd(), pdfPath).replace(/\\/g, '/')
+    return { pdfPath: relPdf, xmlPath: relXml }
   }
 }
