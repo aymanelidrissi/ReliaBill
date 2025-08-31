@@ -1,10 +1,10 @@
 import { PDFDocument, StandardFonts, rgb, PDFFont } from 'pdf-lib';
 import * as fs from 'fs/promises';
+import * as fssync from 'fs';
 import * as path from 'path';
 import type { InvoiceDocModel, DocParty, DocLine, DocTaxSubtotal } from '../../core/models/invoice-doc.model';
 import { round2, toFixed2 } from '../../core/utils/amounts';
 
-/** XML-safe text */
 const xmlEscape = (s: string) =>
   (s ?? '')
     .toString()
@@ -43,11 +43,9 @@ function toModel(input: { invoice: any; company: any; client: any }): InvoiceDoc
     vatRate: Number(l.vatRate),
   }));
 
-  // Totals
   let totalExcl = 0;
   for (const l of lines) totalExcl = round2(totalExcl + round2(l.quantity * l.unitPrice));
 
-  // Per-rate taxable & tax (DocTaxSubtotal = { rate, taxable, tax })
   const byRate = new Map<number, { taxable: number; tax: number }>();
   for (const l of lines) {
     const excl = round2(l.quantity * l.unitPrice);
@@ -79,59 +77,96 @@ function toModel(input: { invoice: any; company: any; client: any }): InvoiceDoc
   };
 }
 
-
-// PDF helpers: WinAnsi sanitization
-
-
-function sanitizeForWinAnsi(s: string): string {
+function sanitizeWinAnsi(s: string): string {
   if (!s) return '';
-
   let out = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-
   out = out
     .replace(/[“”„‟]/g, '"')
     .replace(/[‘’‚‛]/g, "'")
     .replace(/[–—−]/g, '-')
     .replace(/…/g, '...')
-    .replace(/€/g, 'EUR');
-
-    out = out.replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '');
+    .replace(/€/g, 'EUR')
+    .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '');
   return out;
 }
 
-function drawSafeText(opts: {
-  page: any;
-  text: string;
-  x: number;
-  y: number;
-  size: number;
-  font: PDFFont;
-}) {
-  const t = sanitizeForWinAnsi(opts.text ?? '');
-  opts.page.drawText(t, { x: opts.x, y: opts.y, size: opts.size, font: opts.font, color: rgb(0, 0, 0) });
+function drawTextSafe(page: any, font: PDFFont, text: string, x: number, y: number, size: number) {
+  page.drawText(sanitizeWinAnsi(text ?? ''), { x, y, size, font, color: rgb(0, 0, 0) });
 }
 
-/* ---------------- UBL/XML Builder ---------------- */
+function drawTextRight(page: any, font: PDFFont, text: string, rightX: number, y: number, size: number) {
+  const s = sanitizeWinAnsi(text ?? '');
+  const w = font.widthOfTextAtSize(s, size);
+  page.drawText(s, { x: rightX - w, y, size, font, color: rgb(0, 0, 0) });
+}
+
+function wrapText(font: PDFFont, text: string, size: number, maxWidth: number): string[] {
+  const words = sanitizeWinAnsi(text ?? '').split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let line = '';
+  for (const w of words) {
+    const test = line ? line + ' ' + w : w;
+    if (font.widthOfTextAtSize(test, size) <= maxWidth) {
+      line = test;
+    } else {
+      if (line) lines.push(line);
+      if (font.widthOfTextAtSize(w, size) <= maxWidth) {
+        line = w;
+      } else {
+        let cur = '';
+        for (const ch of w.split('')) {
+          const nxt = cur + ch;
+          if (font.widthOfTextAtSize(nxt, size) <= maxWidth) cur = nxt;
+          else {
+            if (cur) lines.push(cur);
+            cur = ch;
+          }
+        }
+        line = cur;
+      }
+    }
+  }
+  if (line) lines.push(line);
+  return lines.length ? lines : [''];
+}
+
+function toAbsolute(pth: string): string {
+  if (!pth) return '';
+  if (path.isAbsolute(pth)) return pth;
+  const cwd = process.cwd();
+  const appsApi = path.resolve(cwd, 'apps', 'api');
+  const candidates = [
+    path.resolve(cwd, pth),
+    path.resolve(appsApi, pth),
+    path.resolve(cwd, 'apps', 'api', pth),
+  ];
+  for (const c of candidates) if (fssync.existsSync(c)) return c;
+  return path.resolve(candidates[0]);
+}
+
+async function readLogo(): Promise<Uint8Array | null> {
+  const env = process.env.DOCGEN_LOGO_PATH;
+  if (!env) return null;
+  try {
+    const abs = toAbsolute(env);
+    const buf = await fs.readFile(abs);
+    return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+  } catch {
+    return null;
+  }
+}
 
 function paymentMeansXML(p: DocParty): string {
   if (!p?.iban) return '';
   const bic = p.bic ? `<cac:FinancialInstitutionBranch><cbc:ID>${xmlEscape(p.bic)}</cbc:ID></cac:FinancialInstitutionBranch>` : '';
   return `
   <cac:PaymentMeans>
-    <cbc:PaymentMeansCode>31</cbc:PaymentMeansCode>
+    <cbc:PaymentMeansCode>30</cbc:PaymentMeansCode>
     <cac:PayeeFinancialAccount>
       <cbc:ID>${xmlEscape(p.iban)}</cbc:ID>
       ${bic}
     </cac:PayeeFinancialAccount>
   </cac:PaymentMeans>`;
-}
-
-function paymentTermsXML(dueDate: string): string {
-  const note = `Pay by ${dueDate}`;
-  return `
-  <cac:PaymentTerms>
-    <cbc:Note>${xmlEscape(note)}</cbc:Note>
-  </cac:PaymentTerms>`;
 }
 
 function buildUBL(doc: InvoiceDocModel): string {
@@ -149,48 +184,38 @@ function buildUBL(doc: InvoiceDocModel): string {
       </cac:PostalAddress>
       ${p.email ? `<cac:Contact><cbc:ElectronicMail>${xmlEscape(p.email)}</cbc:ElectronicMail></cac:Contact>` : ''}
       ${p.iban
-      ? `<cac:PartyFinancialAccount><cbc:ID>${xmlEscape(p.iban)}</cbc:ID>${p.bic
-        ? `<cac:FinancialInstitutionBranch><cbc:ID>${xmlEscape(p.bic)}</cbc:ID></cac:FinancialInstitutionBranch>`
-        : ''
-      }</cac:PartyFinancialAccount>`
+      ? `<cac:PartyFinancialAccount><cbc:ID>${xmlEscape(p.iban)}</cbc:ID>${p.bic ? `<cac:FinancialInstitutionBranch><cbc:ID>${xmlEscape(p.bic)}</cbc:ID></cac:FinancialInstitutionBranch>` : ''}</cac:PartyFinancialAccount>`
       : ''
     }
     </cac:Party>
   </cac:${role}>`;
 
-  const lines = doc.lines
-    .map(
-      (l, i) => `
+  const lines = doc.lines.map((l, i) => `
   <cac:InvoiceLine>
     <cbc:ID>${i + 1}</cbc:ID>
     <cbc:InvoicedQuantity>${toFixed2(l.quantity)}</cbc:InvoicedQuantity>
     <cbc:LineExtensionAmount currencyID="${doc.currency}">${toFixed2(round2(l.quantity * l.unitPrice))}</cbc:LineExtensionAmount>
-    <cac:Item><cbc:Description>${xmlEscape(l.description)}</cbc:Description></cac:Item>
+    <cac:Item>
+      <cbc:Description>${xmlEscape(l.description)}</cbc:Description>
+      <cac:ClassifiedTaxCategory>
+        <cbc:ID>S</cbc:ID>
+        <cbc:Percent>${toFixed2(l.vatRate)}</cbc:Percent>
+        <cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme>
+      </cac:ClassifiedTaxCategory>
+    </cac:Item>
     <cac:Price><cbc:PriceAmount currencyID="${doc.currency}">${toFixed2(l.unitPrice)}</cbc:PriceAmount></cac:Price>
-    <cac:TaxTotal>
-      <cac:TaxSubtotal>
-        <cbc:TaxableAmount currencyID="${doc.currency}">${toFixed2(round2(l.quantity * l.unitPrice))}</cbc:TaxableAmount>
-        <cbc:TaxAmount currencyID="${doc.currency}">${toFixed2(round2(l.quantity * l.unitPrice) * (l.vatRate / 100))}</cbc:TaxAmount>
-        <cac:TaxCategory><cbc:Percent>${toFixed2(l.vatRate)}</cbc:Percent></cac:TaxCategory>
-      </cac:TaxSubtotal>
-    </cac:TaxTotal>
-  </cac:InvoiceLine>`,
-    )
-    .join('');
+  </cac:InvoiceLine>`).join('');
 
-  const subtotals = doc.taxSubtotals
-    .map(
-      (t) => `
+  const subtotals = doc.taxSubtotals.map(t => `
     <cac:TaxSubtotal>
       <cbc:TaxableAmount currencyID="${doc.currency}">${toFixed2(t.taxable)}</cbc:TaxableAmount>
       <cbc:TaxAmount currencyID="${doc.currency}">${toFixed2(t.tax)}</cbc:TaxAmount>
-      <cac:TaxCategory><cbc:Percent>${toFixed2(t.rate)}</cbc:Percent></cac:TaxCategory>
-    </cac:TaxSubtotal>`,
-    )
-    .join('');
-
-  const payMeans = paymentMeansXML(doc.supplier);
-  const payTerms = paymentTermsXML(doc.dueDate);
+      <cac:TaxCategory>
+        <cbc:ID>S</cbc:ID>
+        <cbc:Percent>${toFixed2(t.rate)}</cbc:Percent>
+        <cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme>
+      </cac:TaxCategory>
+    </cac:TaxSubtotal>`).join('');
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
@@ -205,8 +230,7 @@ function buildUBL(doc: InvoiceDocModel): string {
   <cbc:DocumentCurrencyCode>${xmlEscape(doc.currency)}</cbc:DocumentCurrencyCode>
   ${party(doc.supplier, 'AccountingSupplierParty')}
   ${party(doc.customer, 'AccountingCustomerParty')}
-  ${payMeans}
-  ${payTerms}
+  ${paymentMeansXML(doc.supplier)}
   <cac:TaxTotal>
     ${subtotals}
     <cbc:TaxAmount currencyID="${doc.currency}">${toFixed2(doc.totalVat)}</cbc:TaxAmount>
@@ -221,56 +245,117 @@ function buildUBL(doc: InvoiceDocModel): string {
 </Invoice>`;
 }
 
-/* ---------------- PDF Builder ---------------- */
-
 async function buildPDF(doc: InvoiceDocModel): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
-  const page = pdf.addPage([595.28, 841.89]); // A4
+  const page = pdf.addPage([595.28, 841.89]);
   const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const logoBytes = await readLogo();
   const { width } = page.getSize();
 
-  let y = 800;
-  const line = (t: string, size = 12) => {
-    drawSafeText({ page, text: t, x: 40, y, size, font });
-    y -= size + 6;
-  };
+  let y = 812;
 
-  line(`Invoice ${doc.number}`, 18);
-  line(`Issue: ${doc.issueDate}   Due: ${doc.dueDate}`);
-  line('');
-  line(`Supplier: ${doc.supplier.name}`);
-  if (doc.supplier.vat) line(`VAT: ${doc.supplier.vat}`);
-  line(`${doc.supplier.street ?? ''} ${doc.supplier.postalCode ?? ''} ${doc.supplier.city ?? ''}`);
-  line('');
-  line(`Bill To: ${doc.customer.name}`);
-  if (doc.customer.vat) line(`VAT: ${doc.customer.vat}`);
-  line(`${doc.customer.street ?? ''} ${doc.customer.postalCode ?? ''} ${doc.customer.city ?? ''}`);
-  line('');
+  if (logoBytes) {
+    try {
+      const img = await pdf.embedJpg(logoBytes).catch(async () => await pdf.embedPng(logoBytes));
+      const h = 40;
+      const scale = h / img.height;
+      const w = img.width * scale;
+      const x = width - 40 - w;
+      page.drawImage(img, { x, y: y - h, width: w, height: h });
+    } catch { }
+  }
 
-  line('Qty   Description                           Unit     VAT%    Line Excl');
-  page.drawLine({ start: { x: 40, y }, end: { x: width - 40, y }, thickness: 1, color: rgb(0, 0, 0) });
+  drawTextSafe(page, bold, `Invoice ${doc.number}`, 40, y - 18, 18);
+  drawTextSafe(page, font, `Issue: ${doc.issueDate}   Due: ${doc.dueDate}`, 40, y - 36, 11);
+  y -= 56;
+
+  const leftX = 40;
+  const rightX = width / 2 + 10;
+
+  drawTextSafe(page, bold, 'Supplier', leftX, y, 12);
+  drawTextSafe(page, bold, 'Bill To', rightX, y, 12);
+  y -= 14;
+
+  const leftLines = [
+    doc.supplier.name,
+    doc.supplier.vat ? `VAT: ${doc.supplier.vat}` : '',
+    [doc.supplier.street, doc.supplier.postalCode, doc.supplier.city].filter(Boolean).join(' '),
+  ].filter(Boolean);
+
+  const rightLines = [
+    doc.customer.name,
+    doc.customer.vat ? `VAT: ${doc.customer.vat}` : '',
+    [doc.customer.street, doc.customer.postalCode, doc.customer.city].filter(Boolean).join(' '),
+  ].filter(Boolean);
+
+  const rows = Math.max(leftLines.length, rightLines.length);
+  for (let i = 0; i < rows; i++) {
+    if (leftLines[i]) drawTextSafe(page, font, leftLines[i], leftX, y, 11);
+    if (rightLines[i]) drawTextSafe(page, font, rightLines[i], rightX, y, 11);
+    y -= 14;
+  }
   y -= 8;
 
-  for (const l of doc.lines) {
-    const excl = round2(l.quantity * l.unitPrice);
-    const desc = (l.description ?? '').slice(0, 35);
-    const row = `${toFixed2(l.quantity).padStart(4)}  ${desc.padEnd(35)}  ${toFixed2(l.unitPrice).padStart(7)}  ${toFixed2(
-      l.vatRate,
-    ).padStart(5)}  ${toFixed2(excl).padStart(10)}`;
-    line(row);
-  }
+  const colQtyX = 40;
+  const colDescX = 90;
+  const colUnitRight = 440;
+  const colVatRight = 500;
+  const colLineRight = width - 40;
+  const descWidth = colUnitRight - colDescX - 12;
+
+  drawTextSafe(page, bold, 'Qty', colQtyX, y, 11);
+  drawTextSafe(page, bold, 'Description', colDescX, y, 11);
+  drawTextRight(page, bold, 'Unit', colUnitRight, y, 11);
+  drawTextRight(page, bold, 'VAT %', colVatRight, y, 11);
+  drawTextRight(page, bold, 'Line Excl', colLineRight, y, 11);
 
   y -= 6;
   page.drawLine({ start: { x: 40, y }, end: { x: width - 40, y }, thickness: 1, color: rgb(0, 0, 0) });
   y -= 12;
-  line(`Total excl: ${toFixed2(doc.totalExcl)} ${doc.currency}`);
-  line(`Total VAT : ${toFixed2(doc.totalVat)} ${doc.currency}`);
-  line(`Total incl: ${toFixed2(doc.totalIncl)} ${doc.currency}`);
+
+  for (const l of doc.lines) {
+    const excl = round2(l.quantity * l.unitPrice);
+    const descLines = wrapText(font, l.description || '', 11, descWidth);
+
+    drawTextSafe(page, font, toFixed2(l.quantity), colQtyX, y, 11);
+    drawTextRight(page, font, toFixed2(l.unitPrice), colUnitRight, y, 11);
+    drawTextRight(page, font, toFixed2(l.vatRate), colVatRight, y, 11);
+    drawTextRight(page, font, toFixed2(excl), colLineRight, y, 11);
+    drawTextSafe(page, font, descLines[0], colDescX, y, 11);
+
+    if (descLines.length > 1) {
+      for (let i = 1; i < descLines.length; i++) {
+        y -= 14;
+        drawTextSafe(page, font, descLines[i], colDescX, y, 11);
+      }
+    }
+    y -= 18;
+  }
+
+  y -= 4;
+  page.drawLine({ start: { x: 40, y }, end: { x: width - 40, y }, thickness: 1, color: rgb(0, 0, 0) });
+  y -= 14;
+
+  const totalsRight = colLineRight;
+  const totalsLabelX = colDescX;
+  const rowHeight = 32;
+  const amountOffset = 16;
+
+  const drawTotalRow = (label: string, value: string, emphasize = false) => {
+    const lf = emphasize ? bold : font;
+    const rf = emphasize ? bold : font;
+    drawTextSafe(page, lf, label, totalsLabelX, y, emphasize ? 13 : 12);
+    drawTextRight(page, rf, value, totalsRight, y - amountOffset, emphasize ? 13 : 12);
+    y -= rowHeight;
+  };
+
+  drawTotalRow('Total excl:', `${toFixed2(doc.totalExcl)} ${doc.currency}`);
+  drawTotalRow('Total VAT:', `${toFixed2(doc.totalVat)} ${doc.currency}`);
+  drawTotalRow('Total incl:', `${toFixed2(doc.totalIncl)} ${doc.currency}`, true);
 
   return pdf.save();
 }
-
-/* ---------------- Adapter ---------------- */
 
 export class DocGenNodeAdapter {
   private async ensureDirFor(filePath: string) {

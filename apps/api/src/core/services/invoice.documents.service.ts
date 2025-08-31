@@ -1,5 +1,3 @@
-// purpose: prepare UBL/PDF, then send with simple routing (PEPPOL vs fallback) and clear logs
-
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -9,34 +7,37 @@ import { HttpHermesAdapter } from '../../infrastructure/adapters/hermes.http.ada
 
 type SendRoute = 'PEPPOL' | 'HERMES_FALLBACK';
 
-function storageRoot(): string {
+function docsBase(): string {
   const base = process.env.DOCS_DIR || './storage';
   return path.isAbsolute(base) ? base : path.resolve(process.cwd(), base);
 }
 
 function relInvoiceDir(invId: string): string {
-  return path.join('storage', 'invoices', invId);
+  return path.join('invoices', invId);
 }
 
-function toAbsolute(maybeRelative: string): string {
-  if (!maybeRelative) return '';
-  if (path.isAbsolute(maybeRelative)) return maybeRelative;
+function resolveStoredToAbs(stored: string | null | undefined): string | null {
+  if (!stored) return null;
 
-  const cwd = process.cwd();
-  const docs = storageRoot();
-  const appsApi = path.resolve(cwd, 'apps', 'api');
+  let rel = String(stored).replace(/[\\/]+/g, path.sep);
 
-  const norm = maybeRelative.replace(/[\\/]+/g, path.sep);
-  const candidates = [
-    path.resolve(cwd, norm),
-    path.resolve(docs, norm),
-    path.resolve(appsApi, norm),
-  ];
+  const legacyPrefix = 'storage' + path.sep;
+  if (rel.startsWith(legacyPrefix)) rel = rel.slice(legacyPrefix.length);
 
-  for (const c of candidates) {
-    if (fs.existsSync(c)) return c;
-  }
-  return path.resolve(docs, norm);
+  if (path.isAbsolute(rel) && fs.existsSync(rel)) return rel;
+
+  const base = docsBase();
+  const abs = path.resolve(base, rel);
+  if (fs.existsSync(abs)) return abs;
+
+  const alt = path.resolve(process.cwd(), rel);
+  if (fs.existsSync(alt)) return alt;
+
+  return abs;
+}
+
+function toSlash(p: string): string {
+  return p.replace(/\\/g, '/');
 }
 
 @Injectable()
@@ -58,8 +59,9 @@ export class InvoiceDocumentsService {
     const dirRel = relInvoiceDir(inv.id);
     const xmlRel = path.join(dirRel, `${inv.id}.xml`);
     const pdfRel = path.join(dirRel, `${inv.id}.pdf`);
-    const xmlAbs = toAbsolute(xmlRel);
-    const pdfAbs = toAbsolute(pdfRel);
+
+    const xmlAbs = path.resolve(docsBase(), xmlRel);
+    const pdfAbs = path.resolve(docsBase(), pdfRel);
 
     await this.docgen.renderUbl({ invoice: inv, company: inv.company, client: inv.client, outPath: xmlAbs });
     await this.docgen.renderPdf({ invoice: inv, company: inv.company, client: inv.client, outPath: pdfAbs });
@@ -67,21 +69,21 @@ export class InvoiceDocumentsService {
     await this.prisma.invoice.update({
       where: { id: inv.id },
       data: {
-        xmlPath: xmlRel.replace(/[\\/]+/g, path.sep),
-        pdfPath: pdfRel.replace(/[\\/]+/g, path.sep),
+        xmlPath: toSlash(xmlRel),
+        pdfPath: toSlash(pdfRel),
         status: 'READY',
         updatedAt: new Date(),
         logs: {
           create: {
             status: 'PREPARE',
-            message: `Documents prepared (xml=${xmlRel}, pdf=${pdfRel})`,
+            message: `Documents prepared (xml=${toSlash(xmlRel)}, pdf=${toSlash(pdfRel)})`,
             provider: 'docgen',
           },
         },
       },
     });
 
-    return { status: 'READY', xmlPath: xmlRel, pdfPath: pdfRel };
+    return { status: 'READY', xmlPath: toSlash(xmlRel), pdfPath: toSlash(pdfRel) };
   }
 
   async send(userId: string, invoiceId: string) {
@@ -94,14 +96,11 @@ export class InvoiceDocumentsService {
       throw new BadRequestException('Prepare documents before sending');
     }
 
-    const xmlAbs = toAbsolute(inv.xmlPath);
-    if (!fs.existsSync(xmlAbs)) throw new NotFoundException('XML document not found on disk');
+    const xmlAbs = resolveStoredToAbs(inv.xmlPath);
+    if (!xmlAbs || !fs.existsSync(xmlAbs)) throw new NotFoundException('XML document not found on disk');
 
     const hasPeppolId = !!inv.client?.peppolId;
-    const route: SendRoute =
-      hasPeppolId || inv.client?.deliveryMode === 'PEPPOL'
-        ? 'PEPPOL'
-        : 'HERMES_FALLBACK';
+    const route: SendRoute = hasPeppolId || inv.client?.deliveryMode === 'PEPPOL' ? 'PEPPOL' : 'HERMES_FALLBACK';
 
     const result = await this.hermes.send({ xmlPath: xmlAbs });
     const messageId = result?.messageId ?? null;

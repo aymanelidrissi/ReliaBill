@@ -18,6 +18,7 @@ apps/web/out/
 # Nest.js
 dist/
 apps/api/dist/
+apps/api/assets/
 
 # Logs
 *.log

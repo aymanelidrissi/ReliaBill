@@ -163,37 +163,25 @@ export class InvoicesController {
   private resolveArtifactPath(stored: string | null | undefined): string | null {
     if (!stored) return null;
 
-    const norm = String(stored).replace(/[\\/]+/g, path.sep);
+    let rel = String(stored).replace(/[\\/]+/g, path.sep);
 
-    if (path.isAbsolute(norm) && fs.existsSync(norm)) return norm;
+    const legacyPrefix = 'storage' + path.sep;
+    if (rel.startsWith(legacyPrefix)) rel = rel.slice(legacyPrefix.length);
 
-    const cwd = process.cwd();
-    const storageRoot = process.env.DOCS_DIR
+    if (path.isAbsolute(rel) && fs.existsSync(rel)) return rel;
+
+    const base = process.env.DOCS_DIR
       ? (path.isAbsolute(process.env.DOCS_DIR)
           ? process.env.DOCS_DIR
-          : path.resolve(cwd, process.env.DOCS_DIR))
-      : path.resolve(cwd, 'storage');
+          : path.resolve(process.cwd(), process.env.DOCS_DIR))
+      : path.resolve(process.cwd(), 'storage');
 
-    const appsApiRoot = path.resolve(cwd, 'apps', 'api');
+    const abs = path.resolve(base, rel);
+    if (fs.existsSync(abs)) return abs;
 
-    const candidates = new Set<string>([
-      path.resolve(cwd, norm),
-      path.resolve(storageRoot, norm),
-      path.resolve(appsApiRoot, norm),
-    ]);
+    const alt = path.resolve(process.cwd(), rel);
+    if (fs.existsSync(alt)) return alt;
 
-    const storagePrefix = 'storage' + path.sep;
-    if (norm.startsWith(storagePrefix)) {
-      const without = norm.slice(storagePrefix.length);
-      candidates.add(path.resolve(storageRoot, without));
-      candidates.add(path.resolve(appsApiRoot, 'storage', without));
-    }
-
-    for (const c of candidates) {
-      try {
-        if (fs.existsSync(c)) return c;
-      } catch {}
-    }
     return null;
   }
 }
