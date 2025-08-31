@@ -1,136 +1,163 @@
-import { Injectable, BadRequestException, Inject } from '@nestjs/common';
-import { INVOICES_REPO } from '../../core/ports/invoices.repo.port';
-import type { InvoicesRepoPort, InvoiceStatus } from '../../core/ports/invoices.repo.port';
-import { CLIENTS_REPO } from '../../core/ports/clients.repo.port';
-import type { ClientsRepoPort } from '../../core/ports/clients.repo.port';
-import { COMPANIES_REPO } from '../../core/ports/companies.repo.port';
-import type { CompaniesRepoPort } from '../../core/ports/companies.repo.port';
-import { DOC_GEN } from '../../core/ports/docgen.port';
-import type { DocGenPort } from '../../core/ports/docgen.port';
-import { HERMES } from '../../core/ports/hermes.port';
-import type { HermesPort } from '../../core/ports/hermes.port';
-import { DELIVERY_LOGS_REPO } from '../../core/ports/deliverylog.repo.port';
-import type { DeliveryLogsRepoPort } from '../../core/ports/deliverylog.repo.port';
-import * as path from 'path';
+// purpose: prepare UBL/PDF, then send with simple routing (PEPPOL vs fallback) and clear logs
+
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import * as fs from 'fs';
+import * as path from 'path';
+import { PrismaService } from '../../prisma/prisma.service';
+import { DocGenNodeAdapter } from '../../infrastructure/adapters/docgen.node.adapter';
+import { HttpHermesAdapter } from '../../infrastructure/adapters/hermes.http.adapter';
+
+type SendRoute = 'PEPPOL' | 'HERMES_FALLBACK';
+
+function storageRoot(): string {
+  const base = process.env.DOCS_DIR || './storage';
+  return path.isAbsolute(base) ? base : path.resolve(process.cwd(), base);
+}
+
+function relInvoiceDir(invId: string): string {
+  return path.join('storage', 'invoices', invId);
+}
+
+function toAbsolute(maybeRelative: string): string {
+  if (!maybeRelative) return '';
+  if (path.isAbsolute(maybeRelative)) return maybeRelative;
+
+  const cwd = process.cwd();
+  const docs = storageRoot();
+  const appsApi = path.resolve(cwd, 'apps', 'api');
+
+  const norm = maybeRelative.replace(/[\\/]+/g, path.sep);
+  const candidates = [
+    path.resolve(cwd, norm),
+    path.resolve(docs, norm),
+    path.resolve(appsApi, norm),
+  ];
+
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return path.resolve(docs, norm);
+}
 
 @Injectable()
 export class InvoiceDocumentsService {
   constructor(
-    @Inject(INVOICES_REPO) private readonly invoices: InvoicesRepoPort,
-    @Inject(CLIENTS_REPO) private readonly clients: ClientsRepoPort,
-    @Inject(COMPANIES_REPO) private readonly companies: CompaniesRepoPort,
-    @Inject(DOC_GEN) private readonly docgen: DocGenPort,
-    @Inject(HERMES) private readonly hermes: HermesPort,
-    @Inject(DELIVERY_LOGS_REPO) private readonly logs: DeliveryLogsRepoPort,
+    private readonly prisma: PrismaService,
+    private readonly docgen: DocGenNodeAdapter,
+    private readonly hermes: HttpHermesAdapter,
   ) {}
 
-  private storageDir() {
-    return process.env.DOCS_DIR || path.resolve(process.cwd(), 'storage');
-  }
-
-  private invoiceDir(invoiceId: string) {
-    return path.join(this.storageDir(), 'invoices', invoiceId);
-  }
-
   async prepare(userId: string, invoiceId: string) {
-    const company = await this.companies.findByUserId(userId);
-    if (!company) throw new BadRequestException('NO_COMPANY');
+    const inv = await this.prisma.invoice.findFirst({
+      where: { id: invoiceId, company: { userId } },
+      include: { company: true, client: true, lines: true },
+    });
+    if (!inv) throw new NotFoundException('Invoice not found');
+    if (!inv.lines || inv.lines.length === 0) throw new BadRequestException('NO_LINES');
 
-    const inv = await this.invoices.getById(company.id, invoiceId);
-    if (!inv) throw new BadRequestException('NOT_FOUND');
-    if (!inv.clientId) throw new BadRequestException('CLIENT_NOT_FOUND');
+    const dirRel = relInvoiceDir(inv.id);
+    const xmlRel = path.join(dirRel, `${inv.id}.xml`);
+    const pdfRel = path.join(dirRel, `${inv.id}.pdf`);
+    const xmlAbs = toAbsolute(xmlRel);
+    const pdfAbs = toAbsolute(pdfRel);
 
-    const client = await this.clients.findByIdForCompany(company.id, inv.clientId);
-    if (!client) throw new BadRequestException('CLIENT_NOT_FOUND');
+    await this.docgen.renderUbl({ invoice: inv, company: inv.company, client: inv.client, outPath: xmlAbs });
+    await this.docgen.renderPdf({ invoice: inv, company: inv.company, client: inv.client, outPath: pdfAbs });
 
-    const dir = this.invoiceDir(inv.id);
-    fs.mkdirSync(dir, { recursive: true });
-    const pdfPath = path.join(dir, `${inv.id}.pdf`);
-    const xmlPath = path.join(dir, `${inv.id}.xml`);
-
-    await this.docgen.renderPdf({ invoice: inv, company, client, outPath: pdfPath });
-    await this.docgen.renderUbl({ invoice: inv, company, client, outPath: xmlPath });
-
-    const updated = await this.invoices.update(company.id, inv.id, {
-      pdfPath,
-      xmlPath,
-      status: 'READY' as InvoiceStatus,
+    await this.prisma.invoice.update({
+      where: { id: inv.id },
+      data: {
+        xmlPath: xmlRel.replace(/[\\/]+/g, path.sep),
+        pdfPath: pdfRel.replace(/[\\/]+/g, path.sep),
+        status: 'READY',
+        updatedAt: new Date(),
+        logs: {
+          create: {
+            status: 'PREPARE',
+            message: `Documents prepared (xml=${xmlRel}, pdf=${pdfRel})`,
+            provider: 'docgen',
+          },
+        },
+      },
     });
 
-    await this.logs.create({
-      invoiceId: inv.id,
-      kind: 'PREPARE',
-      message: 'Generated PDF and UBL',
-    });
-
-    return { pdfPath, xmlPath, status: updated.status };
-  }
-
-  async listLogs(userId: string, invoiceId: string) {
-    const company = await this.companies.findByUserId(userId);
-    if (!company) throw new BadRequestException('NO_COMPANY');
-
-    const inv = await this.invoices.getById(company.id, invoiceId);
-    if (!inv) throw new BadRequestException('NOT_FOUND');
-
-    return this.logs.listByInvoice(inv.id, 100);
+    return { status: 'READY', xmlPath: xmlRel, pdfPath: pdfRel };
   }
 
   async send(userId: string, invoiceId: string) {
-    const company = await this.companies.findByUserId(userId);
-    if (!company) throw new BadRequestException('NO_COMPANY');
-
-    const inv = await this.invoices.getById(company.id, invoiceId);
-    if (!inv) throw new BadRequestException('NOT_FOUND');
-
-    if (!inv.xmlPath || !fs.existsSync(inv.xmlPath)) {
-      await this.prepare(userId, invoiceId);
-    }
-    const fresh = await this.invoices.getById(company.id, invoiceId);
-    if (!fresh?.xmlPath) throw new BadRequestException('XML_MISSING');
-
-    if (fresh.hermesMessageId) {
-      await this.logs.create({
-        invoiceId: inv.id,
-        kind: 'SKIP',
-        message: 'Already sent',
-      });
-      return { messageId: fresh.hermesMessageId, status: fresh.status };
+    const inv = await this.prisma.invoice.findFirst({
+      where: { id: invoiceId, company: { userId } },
+      include: { client: true },
+    });
+    if (!inv) throw new NotFoundException('Invoice not found');
+    if (inv.status !== 'READY' || !inv.xmlPath) {
+      throw new BadRequestException('Prepare documents before sending');
     }
 
-    const { messageId, delivered } = await this.hermes.send({ xmlPath: fresh.xmlPath });
-    const nextStatus: InvoiceStatus = delivered ? 'DELIVERED' : 'SENT';
-    const updated = await this.invoices.update(company.id, inv.id, {
-      hermesMessageId: messageId,
-      status: nextStatus,
+    const xmlAbs = toAbsolute(inv.xmlPath);
+    if (!fs.existsSync(xmlAbs)) throw new NotFoundException('XML document not found on disk');
+
+    const hasPeppolId = !!inv.client?.peppolId;
+    const route: SendRoute =
+      hasPeppolId || inv.client?.deliveryMode === 'PEPPOL'
+        ? 'PEPPOL'
+        : 'HERMES_FALLBACK';
+
+    const result = await this.hermes.send({ xmlPath: xmlAbs });
+    const messageId = result?.messageId ?? null;
+    const newStatus = result?.delivered ? 'DELIVERED' : 'SENT';
+
+    await this.prisma.invoice.update({
+      where: { id: inv.id },
+      data: {
+        status: newStatus as any,
+        hermesMessageId: messageId,
+        logs: {
+          create: {
+            status: 'SEND',
+            message: `Invoice sent (route=${route}, messageId=${messageId ?? 'n/a'}, status=${newStatus})`,
+            provider: 'hermes',
+          },
+        },
+      },
     });
 
-    await this.logs.create({
-      invoiceId: inv.id,
-      kind: 'SEND',
-      message: 'Sent to Hermes',
-    });
-
-    return { messageId, status: updated.status };
+    return { id: inv.id, messageId, status: newStatus, route };
   }
 
   async refreshStatus(userId: string, invoiceId: string) {
-    const company = await this.companies.findByUserId(userId);
-    if (!company) throw new BadRequestException('NO_COMPANY');
-
-    const inv = await this.invoices.getById(company.id, invoiceId);
-    if (!inv) throw new BadRequestException('NOT_FOUND');
-    if (!inv.hermesMessageId) throw new BadRequestException('NOT_SENT');
+    const inv = await this.prisma.invoice.findFirst({
+      where: { id: invoiceId, company: { userId } },
+    });
+    if (!inv) throw new NotFoundException('Invoice not found');
+    if (!inv.hermesMessageId) throw new BadRequestException('No message to refresh');
 
     const res = await this.hermes.status(inv.hermesMessageId);
-    const map = { SENT: 'SENT', DELIVERED: 'DELIVERED', FAILED: 'FAILED' } as const;
-    const next = map[res.status] as InvoiceStatus;
+    const newStatus = (res?.status as any) || inv.status;
 
-    if (next !== inv.status) {
-      await this.invoices.update(company.id, inv.id, { status: next });
-      await this.logs.create({ invoiceId: inv.id, kind: 'STATUS', message: `Status ${next}` });
-    }
-    return { messageId: res.messageId, status: next };
+    await this.prisma.invoice.update({
+      where: { id: inv.id },
+      data: {
+        status: newStatus,
+        logs: {
+          create: {
+            status: 'STATUS',
+            message: `Status refreshed (messageId=${inv.hermesMessageId}, status=${newStatus})`,
+            provider: 'hermes',
+          },
+        },
+      },
+    });
+
+    return { id: inv.id, status: newStatus };
+  }
+
+  async listLogs(userId: string, invoiceId: string) {
+    const inv = await this.prisma.invoice.findFirst({
+      where: { id: invoiceId, company: { userId } },
+      include: { logs: { orderBy: { timestamp: 'asc' } } },
+    });
+    if (!inv) throw new NotFoundException('Invoice not found');
+    return inv.logs;
   }
 }
