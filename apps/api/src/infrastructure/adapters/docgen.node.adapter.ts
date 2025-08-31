@@ -4,6 +4,7 @@ import * as path from 'path';
 import type { InvoiceDocModel, DocParty, DocLine, DocTaxSubtotal } from '../../core/models/invoice-doc.model';
 import { round2, toFixed2 } from '../../core/utils/amounts';
 
+/** XML-safe text */
 const xmlEscape = (s: string) =>
   (s ?? '')
     .toString()
@@ -46,6 +47,7 @@ function toModel(input: { invoice: any; company: any; client: any }): InvoiceDoc
   let totalExcl = 0;
   for (const l of lines) totalExcl = round2(totalExcl + round2(l.quantity * l.unitPrice));
 
+  // Per-rate taxable & tax (DocTaxSubtotal = { rate, taxable, tax })
   const byRate = new Map<number, { taxable: number; tax: number }>();
   for (const l of lines) {
     const excl = round2(l.quantity * l.unitPrice);
@@ -77,17 +79,23 @@ function toModel(input: { invoice: any; company: any; client: any }): InvoiceDoc
   };
 }
 
-/* PDF helpers: WinAnsi sanitization (no external font for now)       */
+
+// PDF helpers: WinAnsi sanitization
+
+
 function sanitizeForWinAnsi(s: string): string {
   if (!s) return '';
+
   let out = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
   out = out
     .replace(/[“”„‟]/g, '"')
     .replace(/[‘’‚‛]/g, "'")
     .replace(/[–—−]/g, '-')
     .replace(/…/g, '...')
     .replace(/€/g, 'EUR');
-  out = out.replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '');
+
+    out = out.replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '');
   return out;
 }
 
@@ -104,6 +112,28 @@ function drawSafeText(opts: {
 }
 
 /* ---------------- UBL/XML Builder ---------------- */
+
+function paymentMeansXML(p: DocParty): string {
+  if (!p?.iban) return '';
+  const bic = p.bic ? `<cac:FinancialInstitutionBranch><cbc:ID>${xmlEscape(p.bic)}</cbc:ID></cac:FinancialInstitutionBranch>` : '';
+  return `
+  <cac:PaymentMeans>
+    <cbc:PaymentMeansCode>31</cbc:PaymentMeansCode>
+    <cac:PayeeFinancialAccount>
+      <cbc:ID>${xmlEscape(p.iban)}</cbc:ID>
+      ${bic}
+    </cac:PayeeFinancialAccount>
+  </cac:PaymentMeans>`;
+}
+
+function paymentTermsXML(dueDate: string): string {
+  const note = `Pay by ${dueDate}`;
+  return `
+  <cac:PaymentTerms>
+    <cbc:Note>${xmlEscape(note)}</cbc:Note>
+  </cac:PaymentTerms>`;
+}
+
 function buildUBL(doc: InvoiceDocModel): string {
   const party = (p: DocParty, role: 'AccountingSupplierParty' | 'AccountingCustomerParty') => `
   <cac:${role}>
@@ -159,6 +189,9 @@ function buildUBL(doc: InvoiceDocModel): string {
     )
     .join('');
 
+  const payMeans = paymentMeansXML(doc.supplier);
+  const payTerms = paymentTermsXML(doc.dueDate);
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
          xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
@@ -172,6 +205,8 @@ function buildUBL(doc: InvoiceDocModel): string {
   <cbc:DocumentCurrencyCode>${xmlEscape(doc.currency)}</cbc:DocumentCurrencyCode>
   ${party(doc.supplier, 'AccountingSupplierParty')}
   ${party(doc.customer, 'AccountingCustomerParty')}
+  ${payMeans}
+  ${payTerms}
   <cac:TaxTotal>
     ${subtotals}
     <cbc:TaxAmount currencyID="${doc.currency}">${toFixed2(doc.totalVat)}</cbc:TaxAmount>
@@ -190,7 +225,7 @@ function buildUBL(doc: InvoiceDocModel): string {
 
 async function buildPDF(doc: InvoiceDocModel): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
-  const page = pdf.addPage([595.28, 841.89]);
+  const page = pdf.addPage([595.28, 841.89]); // A4
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const { width } = page.getSize();
 

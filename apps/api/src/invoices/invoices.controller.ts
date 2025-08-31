@@ -95,7 +95,24 @@ export class InvoicesController {
   }
 
   @Post(':id/prepare')
-  async prepare(@Req() req: any, @Param('id') id: string) {
+  async prepare(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Query('force') force?: string,
+  ) {
+    const f = (force ?? '').toLowerCase();
+    const isForce = f === '1' || f === 'true' || f === 'yes';
+
+    const inv = await this.service.get(req.user.id, id);
+    if (!inv) throw new NotFoundException('Invoice not found');
+
+    const hasXml = !!this.resolveArtifactPath(inv?.xmlPath);
+    const hasPdf = !!this.resolveArtifactPath(inv?.pdfPath);
+
+    if (!isForce && inv.status === 'READY' && hasXml && hasPdf) {
+      return { status: 'READY', xmlPath: inv.xmlPath, pdfPath: inv.pdfPath };
+    }
+
     return this.docs.prepare(req.user.id, id);
   }
 
@@ -146,40 +163,36 @@ export class InvoicesController {
   private resolveArtifactPath(stored: string | null | undefined): string | null {
     if (!stored) return null;
 
-    const normStored = String(stored).replace(/[\\/]+/g, path.sep);
+    const norm = String(stored).replace(/[\\/]+/g, path.sep);
 
-    if (path.isAbsolute(normStored) && fs.existsSync(normStored)) {
-      return normStored;
-    }
+    if (path.isAbsolute(norm) && fs.existsSync(norm)) return norm;
 
     const cwd = process.cwd();
     const storageRoot = process.env.DOCS_DIR
-      ? path.isAbsolute(process.env.DOCS_DIR)
-        ? process.env.DOCS_DIR
-        : path.resolve(cwd, process.env.DOCS_DIR)
+      ? (path.isAbsolute(process.env.DOCS_DIR)
+          ? process.env.DOCS_DIR
+          : path.resolve(cwd, process.env.DOCS_DIR))
       : path.resolve(cwd, 'storage');
 
     const appsApiRoot = path.resolve(cwd, 'apps', 'api');
 
     const candidates = new Set<string>([
-      path.resolve(cwd, normStored),
-      path.resolve(storageRoot, normStored),
-      path.resolve(appsApiRoot, normStored),
+      path.resolve(cwd, norm),
+      path.resolve(storageRoot, norm),
+      path.resolve(appsApiRoot, norm),
     ]);
 
     const storagePrefix = 'storage' + path.sep;
-    if (normStored.startsWith(storagePrefix)) {
-      const withoutPrefix = normStored.slice(storagePrefix.length);
-      candidates.add(path.resolve(storageRoot, withoutPrefix));
-      candidates.add(path.resolve(appsApiRoot, 'storage', withoutPrefix));
+    if (norm.startsWith(storagePrefix)) {
+      const without = norm.slice(storagePrefix.length);
+      candidates.add(path.resolve(storageRoot, without));
+      candidates.add(path.resolve(appsApiRoot, 'storage', without));
     }
 
-    for (const candidate of candidates) {
+    for (const c of candidates) {
       try {
-        if (fs.existsSync(candidate)) return candidate;
-      } catch {
-
-      }
+        if (fs.existsSync(c)) return c;
+      } catch {}
     }
     return null;
   }

@@ -1,28 +1,32 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # Config
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 BASE="${BASE_URL:-http://localhost:3333}"
 EMAIL="${EMAIL:-user$RANDOM@reliabill.test}"
 PASSWORD="${PASSWORD:-test123}"
 DOCS_DOWNLOAD_DIR="${DOCS_DOWNLOAD_DIR:-$(mktemp -d)}"
-API_TOKEN="${API_TOKEN:-}"   # if you already have one, export and we reuse it
+API_TOKEN="${API_TOKEN:-}"
 
-# Set to 1 to demand strict {"status":"READY"} from /prepare
+# Strict prepare response check
 STRICT_PREPARE="${STRICT_PREPARE:-0}"
 
-# --------------------------------------------------------------------------
+# Rate limit hammer config
+RL_N="${RL_N:-200}"
+RL_PAR="${RL_PAR:-100}"
+
+# ------------------------------------------------------------------------------
 # Requirements
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing dependency: $1"; exit 1; }; }
 need curl
 need node
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # Helpers
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 log()   { printf "\n\033[1;36m▶ %s\033[0m\n" "$*"; }
 ok()    { printf "\033[1;32m✓ %s\033[0m\n" "$*"; }
 fail()  { printf "\033[1;31m✗ %s\033[0m\n" "$*"; exit 1; }
@@ -53,7 +57,7 @@ status_of() { # method path [json]
   fi
 }
 
-# Extract value from JSON using Node (path like "id" or "items.0.id")
+# Extract value from JSON using Node
 json_get() { # json path
   local json="$1"; local path="$2"
   PATHSTR="$path" node -e '
@@ -69,8 +73,7 @@ json_get() { # json path
 
 json_has() { # json path msg
   local json="$1"; local path="$2"; local msg="$3"
-  local out
-  out="$(json_get "$json" "$path")"
+  local out; out="$(json_get "$json" "$path")"
   [[ -n "$out" ]] && ok "$msg" || fail "$msg"
 }
 
@@ -86,18 +89,17 @@ assert_eq() { # expected actual message
 
 assert_file_min_bytes() { # file min_bytes message
   local f="$1" min="$2" msg="$3"
-  local size
-  size=$(wc -c < "$f" | tr -d '[:space:]')
+  local size; size=$(wc -c < "$f" | tr -d '[:space:]')
   [[ "$size" -ge "$min" ]] && ok "$msg ($size bytes)" || fail "$msg (only $size bytes)"
 }
 
-# Portable dates via Node (works on Git Bash/macOS/Linux/Windows)
+# Portable dates via Node
 TODAY=$(node -e 'console.log(new Date().toISOString().slice(0,10))')
 NEXT_MONTH=$(node -e 'let d=new Date(); d.setDate(d.getDate()+30); console.log(d.toISOString().slice(0,10))')
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # Start
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 log "Base URL: $BASE"
 log "Downloads dir: $DOCS_DOWNLOAD_DIR"
 mkdir -p "$DOCS_DOWNLOAD_DIR"
@@ -232,12 +234,12 @@ else
   fi
 fi
 
-# Show invoice after prepare (helps debug paths/status)
+# Show invoice after prepare
 log "Fetch invoice 1 after prepare"
 inv1_post_prep=$(api GET "/invoices/$INV1_ID")
-echo "$inv1_post_prep" | json_pp >/dev/null # pretty-print suppressed; uncomment to see
+echo "$inv1_post_prep" | json_pp >/dev/null
 
-# Download artifacts (even if prepare returned a non-READY shape)
+# Download artifacts
 log "Download XML and PDF for invoice 1"
 xml_path="$DOCS_DOWNLOAD_DIR/$INV1_ID.xml"
 pdf_path="$DOCS_DOWNLOAD_DIR/$INV1_ID.pdf"
@@ -292,17 +294,57 @@ JSON
 code=$(status_of POST /invoices "$bad_body2")
 assert_eq "400" "$code" "no lines -> 400"
 
-# Rate limiting (best-effort probe)
-log "Rate limit probe: 25x GET /auth/me"
-rl429=0
-for i in $(seq 1 25); do
-  c=$(status_of GET /auth/me)
-  [[ "$c" == "429" ]] && rl429=$((rl429+1))
+# ------------------------------------------------------------------------------
+# Rate limit hammer (parallel, 429s)
+# ------------------------------------------------------------------------------
+log "Rate limit: hard burst to POST /auth/verify-credentials"
+tmp_hammer="$(mktemp -d)"
+echo "Temp dir: $tmp_hammer"
+echo "User    : $EMAIL"
+echo "Burst   : $RL_N requests, parallel: $RL_PAR"
+
+do_hammer() {
+  local i="$1"
+  local hdr="$tmp_hammer/$i.headers"
+  curl -sS -D "$hdr" -o /dev/null \
+    -H 'Content-Type: application/json' \
+    -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}" \
+    "$BASE/auth/verify-credentials" || true
+}
+
+running=0
+for i in $(seq 1 "$RL_N"); do
+  do_hammer "$i" &
+  running=$((running+1))
+  if (( running % RL_PAR == 0 )); then wait; fi
 done
-if [[ "$rl429" -ge 1 ]]; then
-  ok "rate limiter engaged (got $rl429 × 429)"
+wait
+
+HDR="$(cat "$tmp_hammer"/*.headers 2>/dev/null || true)"
+count_status () {
+  local code="$1"
+  printf "%s" "$HDR" | awk -v code="$code" '
+    BEGIN{c=0}
+    /^HTTP\// { if ($2==code) c++; else if ($2=="" && $0 ~ (" "code" ")) c++ }
+    END{print c+0}'
+}
+OKC="$(count_status 200)"
+UNAUTHC="$(count_status 401)"
+RLC="$(count_status 429)"
+OTHERC=$(printf "%s" "$HDR" | awk 'BEGIN{c=0} /^HTTP\// { if ($2!="200" && $2!="401" && $2!="429") c++ } END{print c+0}')
+
+echo "Results:"
+echo "  200 OK           : $OKC"
+echo "  401 Unauthorized : $UNAUTHC"
+echo "  429 Too Many     : $RLC"
+echo "  Other            : $OTHERC"
+
+LAST_FILE="$(ls -1 "$tmp_hammer"/*.headers 2>/dev/null | sort -V | tail -1 || true)"
+if [[ -n "$LAST_FILE" && -f "$LAST_FILE" ]]; then
+  echo "Last response headers:"
+  grep -iE '^(HTTP/|x-ratelimit|retry-after|date|content-type)' "$LAST_FILE" || echo "(no X-RateLimit headers)"
 else
-  echo "Note: no 429 observed (threshold/window may differ)."
+  echo "No header files captured."
 fi
 
 ok "ALL CHECKS COMPLETED"
