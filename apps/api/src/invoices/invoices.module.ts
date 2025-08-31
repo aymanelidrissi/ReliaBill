@@ -1,9 +1,13 @@
 import { Module } from '@nestjs/common';
 import { InvoicesController } from './invoices.controller';
+
 import { PrismaService } from '../prisma/prisma.service';
+
 import { InvoiceService } from '../core/services/invoice.service';
 import { InvoiceDocumentsService } from '../core/services/invoice.documents.service';
 import { InvoiceNumberService } from '../core/services/invoice.number.service';
+import { UblValidatorService } from '../core/services/ubl.validator.service';
+import { SmpResolverService } from '../core/services/smp.resolver.service';
 
 import { INVOICES_REPO } from '../core/ports/invoices.repo.port';
 import { CLIENTS_REPO } from '../core/ports/clients.repo.port';
@@ -18,18 +22,23 @@ import { PrismaCompaniesRepo } from '../infrastructure/adapters/prisma.companies
 import { PrismaDeliveryLogsRepo } from '../infrastructure/adapters/prisma.deliverylogs.repo';
 import { DocGenNodeAdapter } from '../infrastructure/adapters/docgen.node.adapter';
 import { HttpHermesAdapter } from '../infrastructure/adapters/hermes.http.adapter';
+import { PeppolApAdapter } from '../infrastructure/adapters/peppol.ap.adapter';
 
 import { AuthModule } from '../auth/auth.module';
 import { CompaniesModule } from '../companies/companies.module';
 
+import { PeppolWebhookController } from '../peppol/peppol.webhook.controller';
+
 @Module({
   imports: [AuthModule, CompaniesModule],
-  controllers: [InvoicesController],
+  controllers: [InvoicesController, PeppolWebhookController],
   providers: [
     PrismaService,
     InvoiceService,
     InvoiceDocumentsService,
     InvoiceNumberService,
+    UblValidatorService,
+    SmpResolverService,
 
     { provide: INVOICES_REPO, useClass: PrismaInvoicesRepo },
     { provide: CLIENTS_REPO, useClass: PrismaClientsRepo },
@@ -41,6 +50,7 @@ import { CompaniesModule } from '../companies/companies.module';
 
     DocGenNodeAdapter,
     HttpHermesAdapter,
+    PeppolApAdapter,
   ],
 })
 export class InvoicesModule { }
