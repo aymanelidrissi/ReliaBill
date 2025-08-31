@@ -3,6 +3,7 @@ import { InvoicesController } from './invoices.controller';
 import { PrismaService } from '../prisma/prisma.service';
 import { InvoiceService } from '../core/services/invoice.service';
 import { InvoiceDocumentsService } from '../core/services/invoice.documents.service';
+import { InvoiceNumberService } from '../core/services/invoice.number.service';
 
 import { INVOICES_REPO } from '../core/ports/invoices.repo.port';
 import { CLIENTS_REPO } from '../core/ports/clients.repo.port';
@@ -28,6 +29,7 @@ import { CompaniesModule } from '../companies/companies.module';
     PrismaService,
     InvoiceService,
     InvoiceDocumentsService,
+    InvoiceNumberService,
 
     { provide: INVOICES_REPO, useClass: PrismaInvoicesRepo },
     { provide: CLIENTS_REPO, useClass: PrismaClientsRepo },

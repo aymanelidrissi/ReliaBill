@@ -9,6 +9,7 @@ import type {
   InvoiceListParams,
   InvoiceStatus,
 } from '../ports/invoices.repo.port';
+import { InvoiceNumberService } from './invoice.number.service';
 
 type NewLine = { description: string; quantity: number; unitPrice: number; vatRate: number };
 
@@ -18,7 +19,8 @@ export class InvoiceService {
     @Inject(COMPANIES_REPO) private readonly companies: CompaniesRepoPort,
     @Inject(CLIENTS_REPO) private readonly clients: ClientsRepoPort,
     @Inject(INVOICES_REPO) private readonly invoices: InvoicesRepoPort,
-  ) {}
+    private readonly numbers: InvoiceNumberService,
+  ) { }
 
   async list(userId: string, params: InvoiceListParams) {
     const company = await this.companies.findByUserId(userId);
@@ -54,10 +56,9 @@ export class InvoiceService {
     }
 
     const totals = this.computeTotals(dto.lines);
-    const year = issue.getUTCFullYear();
-    const count = await this.invoices.countForYear(company.id, year);
-    const number = `${year}-${String(count + 1).padStart(4, '0')}`;
     const currency = dto.currency || 'EUR';
+
+    const { number } = await this.numbers.allocate(company.id, issue);
 
     return this.invoices.create(company.id, {
       clientId: dto.clientId ?? null,

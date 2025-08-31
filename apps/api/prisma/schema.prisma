@@ -32,6 +32,7 @@ model Company {
 
   clients  Client[]
   invoices Invoice[]
+  counters InvoiceCounter[]
 }
 
 model Client {
@@ -121,4 +122,14 @@ model DeliveryLog {
   message   String?
   provider  String   @default("hermes")
   createdAt DateTime @default(now())
+}
+
+model InvoiceCounter {
+  companyId String
+  year      Int
+  seq       Int    @default(0)
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@id([companyId, year])
 }
