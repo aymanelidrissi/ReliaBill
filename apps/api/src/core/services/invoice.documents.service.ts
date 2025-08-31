@@ -93,50 +93,41 @@ export class InvoiceDocumentsService {
       include: { client: true },
     });
     if (!inv) throw new NotFoundException('Invoice not found');
-    if (inv.status !== 'READY' || !inv.xmlPath) throw new BadRequestException('Prepare documents before sending');
+
+    if (inv.status !== 'READY' || !inv.xmlPath) {
+      throw new BadRequestException('Prepare documents before sending');
+    }
 
     const xmlAbs = resolveStoredToAbs(inv.xmlPath);
-    if (!xmlAbs || !fs.existsSync(xmlAbs)) throw new NotFoundException('XML document not found on disk');
-
-    const hasPeppolId = !!inv.client?.peppolId;
-    const route: SendRoute = hasPeppolId || inv.client?.deliveryMode === 'PEPPOL' ? 'PEPPOL' : 'HERMES_FALLBACK';
-
-    let messageId: string | null = null;
-    let newStatus: 'SENT' | 'DELIVERED' | 'FAILED' = 'SENT';
-    let provider = 'hermes';
-
-    if (route === 'PEPPOL') {
-      const v = await this.validator.validateFile(xmlAbs);
-      if (!v.ok) throw new BadRequestException(`INVALID_UBL: ${v.errors.join('; ')}`);
-
-      const recipient = this.smp.resolveParticipant({
-        peppolScheme: inv.client?.peppolScheme,
-        peppolId: inv.client?.peppolId,
-      });
-      if (!recipient) throw new BadRequestException('MISSING_PEPPOL_ID');
-
-      const { processId, documentTypeId } = this.smp.resolveRouting(recipient);
-      const r = await this.peppol.send({ xmlPath: xmlAbs, recipient, processId, documentTypeId });
-      messageId = r.messageId || null;
-      newStatus = r.delivered ? 'DELIVERED' : 'SENT';
-      provider = 'peppol-ap';
-    } else {
-      const r = await this.hermes.send({ xmlPath: xmlAbs });
-      messageId = r.messageId || null;
-      newStatus = r.delivered ? 'DELIVERED' : 'SENT';
-      provider = 'hermes';
+    if (!xmlAbs || !fs.existsSync(xmlAbs)) {
+      throw new NotFoundException('XML document not found on disk');
     }
+
+    const strict = String(process.env.PEPPOL_STRICT ?? '0') !== '0';
+    const wantsPeppol = inv.client?.deliveryMode === 'PEPPOL';
+    const hasPeppolId = !!inv.client?.peppolId;
+
+    const route: SendRoute =
+      wantsPeppol && hasPeppolId
+        ? 'PEPPOL'
+        : wantsPeppol && strict
+          ? (() => { throw new BadRequestException('MISSING_PEPPOL_ID'); })()
+          : 'HERMES_FALLBACK';
+
+    const result = await this.hermes.send({ xmlPath: xmlAbs });
+    const messageId = result?.messageId ?? null;
+    const newStatus = result?.delivered ? 'DELIVERED' : 'SENT';
 
     await this.prisma.invoice.update({
       where: { id: inv.id },
       data: {
-        status: newStatus,
+        status: newStatus as any,
         hermesMessageId: messageId,
         logs: {
           create: {
             status: 'SEND',
             message: `Invoice sent (route=${route}, messageId=${messageId ?? 'n/a'}, status=${newStatus})`,
-            provider,
+            provider: 'hermes',
           },
         },
       },
@@ -144,6 +135,8 @@ export class InvoiceDocumentsService {
 
     return { id: inv.id, messageId, status: newStatus, route };
   }
+
+
 
   async refreshStatus(userId: string, invoiceId: string) {
     const inv = await this.prisma.invoice.findFirst({ where: { id: invoiceId, company: { userId } } });
