@@ -306,7 +306,7 @@ async function buildPDF(doc: InvoiceDocModel): Promise<Uint8Array> {
 
   drawTextSafe(page, bold, 'Qty', colQtyX, y, 11);
   drawTextSafe(page, bold, 'Description', colDescX, y, 11);
-  drawTextRight(page, bold, 'Unit', colUnitRight, y, 11);
+  drawTextRight(page, bold, 'PPU', colUnitRight, y, 11);
   drawTextRight(page, bold, 'VAT %', colVatRight, y, 11);
   drawTextRight(page, bold, 'Line Excl', colLineRight, y, 11);
 
