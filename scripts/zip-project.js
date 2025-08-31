@@ -29,16 +29,24 @@ const ignore = require('ignore');
       files = await listFilesFiltered(root, ig, outName);
     }
 
-    if (files.length === 0) {
+    const existing = [];
+    const skipped = [];
+    for (const rel of files) {
+      const abs = path.join(root, rel);
+      if (fs.existsSync(abs)) existing.push(rel);
+      else skipped.push(rel);
+    }
+    if (existing.length === 0) {
       console.error('No files to archive after applying ignore rules.');
       process.exit(2);
     }
 
-    await zipFiles(root, files, outPath);
+    await zipFiles(root, existing, outPath);
 
     const stats = fs.statSync(outPath);
     console.log(`\n Created: ${outName}`);
-    console.log(`Files: ${files.length}`);
+    console.log(`Files: ${existing.length}`);
+    if (skipped.length) console.log(`Skipped missing: ${skipped.length}`);
     console.log(`Size: ${(stats.size / (1024 * 1024)).toFixed(2)} MB`);
   } catch (err) {
     console.error('Zip failed:', err?.stack || err?.message || err);
@@ -71,7 +79,6 @@ function sanitizeZipName(name) {
 
 async function loadIgnorePatterns(root, outName) {
   const base = [
-    // bloat/build
     'node_modules/**',
     '.pnpm/**',
     '.pnpm-store/**',
@@ -84,16 +91,12 @@ async function loadIgnorePatterns(root, outName) {
     '**/.vercel/**',
     '**/.sst/**',
     '**/.serverless/**',
-
-    // vcs/ide
     '.git/**',
     '.github/**',
     '.githooks/**',
     '.gitlab/**',
     '.vscode/**',
     '.idea/**',
-
-    // env/logs/tmp
     '.env',
     '.env.*',
     '!/.env.example',
@@ -103,19 +106,14 @@ async function loadIgnorePatterns(root, outName) {
     '*.tmp',
     '*.log',
     'pnpm-debug.log',
-
-    // tests/coverage
     'coverage/**',
     '**/__tests__/**',
     '**/__mocks__/**',
     '**/*.test.*',
     '**/*.spec.*',
-
-    // misc
     'tmp/**',
     'sandbox/**',
     '**/*.zip',
-
     'storage/**',
   ];
 
@@ -132,14 +130,11 @@ async function loadIgnorePatterns(root, outName) {
           .map((l) => l.trim())
           .filter((l) => l && !l.startsWith('#'));
         break;
-      } catch {
-
-      }
+      } catch {}
     }
   }
 
   const patterns = [...base, ...user];
-
   patterns.push(outName);
   patterns.push(`./${outName}`);
 
@@ -160,7 +155,6 @@ async function listFilesFiltered(root, ig, outName) {
     for (const ent of entries) {
       const rel = path.posix.join(relDir, ent.name.replace(/\\/g, '/'));
       if (rel === outName) continue;
-
       if (ent.isDirectory()) {
         if (ig.ignores(rel + '/')) continue;
         await walk(path.join(absDir, ent.name), rel);
@@ -186,7 +180,7 @@ function zipFiles(root, files, outPath) {
 
     for (const rel of files) {
       const abs = path.join(root, rel);
-      archive.file(abs, { name: rel });
+      if (fs.existsSync(abs)) archive.file(abs, { name: rel });
     }
 
     archive.finalize().catch(reject);
