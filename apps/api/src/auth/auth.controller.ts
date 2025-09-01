@@ -8,7 +8,7 @@ import { RL } from '../config/rate-limit';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(private readonly auth: AuthService) { }
 
   @Post('register')
   @Throttle({ default: RL.REGISTER })
@@ -49,6 +49,14 @@ export class AuthController {
       throw e;
     }
   }
+
+  @Post('login')
+  @Throttle({ default: RL.LOGIN })
+  @HttpCode(200)
+  login(@Body() dto: VerifyCredentialsDto) {
+    return this.verify(dto)
+  }
+
 
   @UseGuards(JwtAuthGuard)
   @Get('me')
