@@ -46,7 +46,7 @@ export class InvoiceDocumentsService {
     private readonly validator: UblValidatorService,
     private readonly smp: SmpResolverService,
     private readonly peppol: PeppolApAdapter,
-  ) {}
+  ) { }
 
   async prepare(userId: string, invoiceId: string) {
     const inv = await this.prisma.invoice.findFirst({
@@ -55,6 +55,12 @@ export class InvoiceDocumentsService {
     });
     if (!inv) throw new NotFoundException('Invoice not found');
     if (!inv.lines || inv.lines.length === 0) throw new BadRequestException('NO_LINES');
+
+    const existingXmlAbs = resolveStoredToAbs(inv.xmlPath ?? null);
+    const existingPdfAbs = resolveStoredToAbs(inv.pdfPath ?? null);
+    if (inv.status === 'READY' && existingXmlAbs && existingPdfAbs) {
+      return { status: 'READY', xmlPath: inv.xmlPath, pdfPath: inv.pdfPath };
+    }
 
     const dirRel = relInvoiceDir(inv.id);
     const xmlRel = path.join(dirRel, `${inv.id}.xml`);
@@ -92,10 +98,15 @@ export class InvoiceDocumentsService {
       include: { client: true },
     });
     if (!inv) throw new NotFoundException('Invoice not found');
-    if (inv.status !== 'READY' || !inv.xmlPath) throw new BadRequestException('Prepare documents before sending');
 
-    const xmlAbs = resolveStoredToAbs(inv.xmlPath);
-    if (!xmlAbs || !fs.existsSync(xmlAbs)) throw new NotFoundException('XML document not found on disk');
+    const existingXmlAbs = resolveStoredToAbs(inv.xmlPath ?? null);
+    if (inv.status !== 'READY' && inv.status !== 'DRAFT' && inv.hermesMessageId) {
+      const route: SendRoute = inv.client?.deliveryMode === 'HERMES' ? 'HERMES_FALLBACK' : 'PEPPOL';
+      return { id: inv.id, messageId: inv.hermesMessageId, status: inv.status, route };
+    }
+    if (!existingXmlAbs || !fs.existsSync(existingXmlAbs)) {
+      throw new BadRequestException('Prepare documents before sending');
+    }
 
     const wantsPeppol = inv.client?.deliveryMode === 'PEPPOL';
     if (wantsPeppol && !inv.client?.peppolId) throw new BadRequestException('MISSING_PEPPOL_ID');
@@ -111,9 +122,8 @@ export class InvoiceDocumentsService {
       const documentTypeId =
         process.env.ACUBE_DOC_TYPE ||
         'urn:oasis:names:specification:ubl:schema:xsd:Invoice-2::Invoice##urn:cen.eu:en16931:2017#compliant#urn:fdc:peppol.eu:2017:poacc:billing:3.0::2.1';
-
       const res = await this.peppol.send({
-        xmlPath: xmlAbs,
+        xmlPath: existingXmlAbs,
         recipient: { scheme: inv.client!.peppolScheme || 'iso6523-actorid-upis', id: inv.client!.peppolId! },
         processId,
         documentTypeId,
@@ -121,7 +131,7 @@ export class InvoiceDocumentsService {
       messageId = res?.messageId ?? null;
       delivered = !!res?.delivered;
     } else {
-      const res = await this.hermes.send({ xmlPath: xmlAbs });
+      const res = await this.hermes.send({ xmlPath: existingXmlAbs });
       messageId = res?.messageId ?? null;
       delivered = !!res?.delivered;
     }
