@@ -1,4 +1,4 @@
-import { getBase, getToken } from "./store";
+import { getBase } from "./store";
 
 function join(base: string, path: string) {
     const b = base.endsWith("/") ? base.slice(0, -1) : base;
@@ -8,16 +8,10 @@ function join(base: string, path: string) {
 
 export async function api<T = any>(path: string, init: RequestInit = {}): Promise<T> {
     const base = getBase() || "/rb";
-    const token =
-        getToken() || (typeof window !== "undefined" ? localStorage.getItem("rb.token") : null);
 
     const headers = new Headers(init.headers || {});
     if (!headers.has("Content-Type") && init.body && !(init.body instanceof FormData)) {
         headers.set("Content-Type", "application/json");
-    }
-    
-    if (token && !headers.has("Authorization")) {
-        headers.set("Authorization", `Bearer ${token}`);
     }
 
     const res = await fetch(join(base, path), {
@@ -29,8 +23,6 @@ export async function api<T = any>(path: string, init: RequestInit = {}): Promis
 
     if (res.status === 401) {
         if (typeof window !== "undefined") {
-            localStorage.removeItem("rb.token");
-            document.cookie = "rb.token=; Path=/; Max-Age=0";
             const next = encodeURIComponent(window.location.pathname + window.location.search);
             window.location.href = `/login?next=${next}`;
         }
@@ -55,14 +47,7 @@ export async function api<T = any>(path: string, init: RequestInit = {}): Promis
 
 export async function download(path: string, filename: string) {
     const base = getBase() || "/rb";
-    const token =
-        getToken() || (typeof window !== "undefined" ? localStorage.getItem("rb.token") : null);
-
-    const headers = new Headers();
-    if (token) headers.set("Authorization", `Bearer ${token}`);
-
     const res = await fetch(join(base, path), {
-        headers,
         credentials: "include",
     });
     if (!res.ok) {
@@ -83,11 +68,6 @@ export async function download(path: string, filename: string) {
 export async function logout() {
     try {
         await api("/auth/logout", { method: "POST" });
-    } catch {
-    }
-    try {
-        localStorage.removeItem("rb.token");
-        document.cookie = "rb.token=; Path=/; Max-Age=0";
     } catch { }
     if (typeof window !== "undefined") window.location.href = "/login";
 }

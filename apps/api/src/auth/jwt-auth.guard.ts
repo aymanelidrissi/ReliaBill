@@ -21,7 +21,7 @@ export class JwtAuthGuard implements CanActivate {
       token = req.cookies[name];
     }
 
-    if (!token) throw new UnauthorizedException('Missing bearer token');
+    if (!token) throw new UnauthorizedException('Missing token');
 
     try {
       const payload = await this.jwt.verify<{ sub: string; email: string }>(token);

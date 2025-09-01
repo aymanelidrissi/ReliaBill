@@ -22,13 +22,8 @@ export default function LoginPage() {
                 const base = getBase();
                 const r = await fetch(`${base}/auth/me`, { credentials: "include" });
                 if (r.ok) router.replace(sp.get("next") || "/invoices");
-            } catch {
-               
-            }
+            } catch { }
         })();
-
-        const existing = typeof window !== "undefined" ? localStorage.getItem("rb.token") : null;
-        if (existing) router.replace(sp.get("next") || "/invoices");
     }, [router, sp]);
 
     async function onSubmit(e: React.FormEvent) {
@@ -43,14 +38,10 @@ export default function LoginPage() {
                 body: JSON.stringify({ email, password }),
             });
 
-            const text = await res.text();
-            if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
-
-            try {
-                const json = JSON.parse(text);
-                const token = json.access_token || json.accessToken || json.token || "";
-                if (token) localStorage.setItem("rb.token", token);
-            } catch {  }
+            if (!res.ok) {
+                const text = await res.text().catch(() => "");
+                throw new Error(text || `HTTP ${res.status}`);
+            }
 
             toast.success("Logged in");
             router.replace(sp.get("next") || "/invoices");
