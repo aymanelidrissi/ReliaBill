@@ -8,7 +8,6 @@ import { UblValidatorService } from './ubl.validator.service';
 import { SmpResolverService } from './smp.resolver.service';
 import { PeppolApAdapter } from '../../infrastructure/adapters/peppol.ap.adapter';
 
-
 type SendRoute = 'PEPPOL' | 'HERMES_FALLBACK';
 
 function docsBase(): string {
@@ -47,7 +46,7 @@ export class InvoiceDocumentsService {
     private readonly validator: UblValidatorService,
     private readonly smp: SmpResolverService,
     private readonly peppol: PeppolApAdapter,
-  ) { }
+  ) {}
 
   async prepare(userId: string, invoiceId: string) {
     const inv = await this.prisma.invoice.findFirst({
@@ -93,30 +92,49 @@ export class InvoiceDocumentsService {
       include: { client: true },
     });
     if (!inv) throw new NotFoundException('Invoice not found');
-
     if (inv.status !== 'READY' || !inv.xmlPath) {
       throw new BadRequestException('Prepare documents before sending');
     }
 
     const xmlAbs = resolveStoredToAbs(inv.xmlPath);
-    if (!xmlAbs || !fs.existsSync(xmlAbs)) {
-      throw new NotFoundException('XML document not found on disk');
+    if (!xmlAbs || !fs.existsSync(xmlAbs)) throw new NotFoundException('XML document not found on disk');
+
+    const wantsPeppol = inv.client?.deliveryMode === 'PEPPOL';
+    if (wantsPeppol && !inv.client?.peppolId) {
+      throw new BadRequestException('MISSING_PEPPOL_ID');
     }
 
-    const strict = String(process.env.PEPPOL_STRICT ?? '0') !== '0';
-    const wantsPeppol = inv.client?.deliveryMode === 'PEPPOL';
-    const hasPeppolId = !!inv.client?.peppolId;
+    const usePeppol = !!inv.client?.peppolId && inv.client?.deliveryMode !== 'HERMES';
+    const route: SendRoute = usePeppol ? 'PEPPOL' : 'HERMES_FALLBACK';
 
-    const route: SendRoute =
-      wantsPeppol && hasPeppolId
-        ? 'PEPPOL'
-        : wantsPeppol && strict
-          ? (() => { throw new BadRequestException('MISSING_PEPPOL_ID'); })()
-          : 'HERMES_FALLBACK';
+    let messageId: string | null = null;
+    let delivered = false;
 
-    const result = await this.hermes.send({ xmlPath: xmlAbs });
-    const messageId = result?.messageId ?? null;
-    const newStatus = result?.delivered ? 'DELIVERED' : 'SENT';
+    if (route === 'PEPPOL') {
+      const processId =
+        process.env.ACUBE_PROCESS || 'urn:fdc:peppol.eu:2017:poacc:billing:01:1.0';
+      const documentTypeId =
+        process.env.ACUBE_DOC_TYPE ||
+        'urn:oasis:names:specification:ubl:schema:xsd:Invoice-2::Invoice##urn:cen.eu:en16931:2017#compliant#urn:fdc:peppol.eu:2017:poacc:billing:3.0::2.1';
+
+      const res = await this.peppol.send({
+        xmlPath: xmlAbs,
+        recipient: {
+          scheme: inv.client!.peppolScheme || 'iso6523-actorid-upis',
+          id: inv.client!.peppolId!,
+        },
+        processId,
+        documentTypeId,
+      });
+      messageId = res?.messageId ?? null;
+      delivered = !!res?.delivered;
+    } else {
+      const res = await this.hermes.send({ xmlPath: xmlAbs });
+      messageId = res?.messageId ?? null;
+      delivered = !!res?.delivered;
+    }
+
+    const newStatus = delivered ? 'DELIVERED' : 'SENT';
 
     await this.prisma.invoice.update({
       where: { id: inv.id },
@@ -127,7 +145,7 @@ export class InvoiceDocumentsService {
           create: {
             status: 'SEND',
             message: `Invoice sent (route=${route}, messageId=${messageId ?? 'n/a'}, status=${newStatus})`,
-            provider: 'hermes',
+            provider: route === 'PEPPOL' ? 'peppol' : 'hermes',
           },
         },
       },
@@ -136,15 +154,29 @@ export class InvoiceDocumentsService {
     return { id: inv.id, messageId, status: newStatus, route };
   }
 
-
-
   async refreshStatus(userId: string, invoiceId: string) {
-    const inv = await this.prisma.invoice.findFirst({ where: { id: invoiceId, company: { userId } } });
+    const inv = await this.prisma.invoice.findFirst({
+      where: { id: invoiceId, company: { userId } },
+      include: { client: true },
+    });
     if (!inv) throw new NotFoundException('Invoice not found');
     if (!inv.hermesMessageId) throw new BadRequestException('No message to refresh');
 
-    const res = await this.hermes.status(inv.hermesMessageId);
-    const newStatus = (res?.status as any) || inv.status;
+    let newStatus = inv.status;
+    let provider = 'hermes';
+
+    // If the adapter exposes `status`, use it. Otherwise fall back to Hermes.
+    const peppolHasStatus = typeof (this.peppol as any).status === 'function';
+
+    if (inv.client?.deliveryMode === 'PEPPOL' && peppolHasStatus) {
+      const res = await (this.peppol as any).status(inv.hermesMessageId);
+      newStatus = (res?.status as any) || inv.status;
+      provider = 'peppol';
+    } else {
+      const res = await this.hermes.status(inv.hermesMessageId);
+      newStatus = (res?.status as any) || inv.status;
+      provider = 'hermes';
+    }
 
     await this.prisma.invoice.update({
       where: { id: inv.id },
@@ -154,7 +186,7 @@ export class InvoiceDocumentsService {
           create: {
             status: 'STATUS',
             message: `Status refreshed (messageId=${inv.hermesMessageId}, status=${newStatus})`,
-            provider: 'hermes',
+            provider,
           },
         },
       },

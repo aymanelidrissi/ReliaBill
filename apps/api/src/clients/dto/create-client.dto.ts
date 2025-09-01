@@ -1,4 +1,4 @@
-import { IsEmail, IsOptional, IsString } from 'class-validator';
+import { IsEmail, IsIn, IsOptional, IsString } from 'class-validator';
 
 export class CreateClientDto {
   @IsString()
@@ -27,4 +27,16 @@ export class CreateClientDto {
   @IsString()
   @IsOptional()
   country?: string;
+
+  @IsString()
+  @IsOptional()
+  peppolScheme?: string | null;
+
+  @IsString()
+  @IsOptional()
+  peppolId?: string | null;
+
+  @IsIn(['PEPPOL', 'HERMES'])
+  @IsOptional()
+  deliveryMode?: 'PEPPOL' | 'HERMES';
 }

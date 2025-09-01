@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, ConflictException } from '@nestjs/common';
 import { COMPANIES_REPO } from '../ports/companies.repo.port';
 import { CLIENTS_REPO } from '../ports/clients.repo.port';
 import { INVOICES_REPO } from '../ports/invoices.repo.port';
@@ -12,6 +12,14 @@ import type {
 import { InvoiceNumberService } from './invoice.number.service';
 
 type NewLine = { description: string; quantity: number; unitPrice: number; vatRate: number };
+type CreateDto = {
+  clientId?: string | null;
+  number?: string;
+  issueDate: string;
+  dueDate: string;
+  currency?: string;
+  lines: NewLine[];
+};
 
 @Injectable()
 export class InvoiceService {
@@ -36,10 +44,7 @@ export class InvoiceService {
     return invoice;
   }
 
-  async create(
-    userId: string,
-    dto: { clientId?: string | null; issueDate: string; dueDate: string; currency?: string; lines: NewLine[] },
-  ) {
+  async create(userId: string, dto: CreateDto) {
     const company = await this.companies.findByUserId(userId);
     if (!company) throw new Error('NO_COMPANY');
 
@@ -58,18 +63,40 @@ export class InvoiceService {
     const totals = this.computeTotals(dto.lines);
     const currency = dto.currency || 'EUR';
 
-    const { number } = await this.numbers.allocate(company.id, issue);
+    const tryCreate = async (number: string) => {
+      try {
+        return await this.invoices.create(company.id, {
+          clientId: dto.clientId ?? null,
+          number,
+          issueDate: issue,
+          dueDate: due,
+          currency,
+          status: 'DRAFT',
+          totals,
+          lines: dto.lines,
+        });
+      } catch (e: any) {
+        if (e?.code === 'P2002') throw new ConflictException('Invoice number already exists');
+        throw e;
+      }
+    };
 
-    return this.invoices.create(company.id, {
-      clientId: dto.clientId ?? null,
-      number,
-      issueDate: issue,
-      dueDate: due,
-      currency,
-      status: 'DRAFT',
-      totals,
-      lines: dto.lines,
-    });
+    const provided = (dto.number || '').trim();
+    if (provided) {
+      return tryCreate(provided);
+    }
+
+    for (let i = 0; i < 2; i++) {
+      const { number } = await this.numbers.allocate(company.id, issue);
+      try {
+        return await tryCreate(number);
+      } catch (e) {
+        if (e instanceof ConflictException && i === 0) continue;
+        throw e;
+      }
+    }
+
+    throw new Error('COUNTER_ALLOC_FAILED');
   }
 
   async update(
@@ -104,7 +131,9 @@ export class InvoiceService {
       if (!client) throw new Error('CLIENT_NOT_FOUND');
     }
 
-    let totals: { totalExcl: number; totalVat: number; totalIncl: number } | undefined;
+    let totals:
+      | { totalExcl: number; totalVat: number; totalIncl: number }
+      | undefined;
     if (dto.lines) {
       if (dto.lines.length === 0) throw new Error('NO_LINES');
       totals = this.computeTotals(dto.lines);

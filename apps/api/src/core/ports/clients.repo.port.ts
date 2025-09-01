@@ -1,3 +1,5 @@
+export type DeliveryMode = 'PEPPOL' | 'HERMES';
+
 export interface ClientEntity {
   id: string;
   companyId: string;
@@ -8,6 +10,9 @@ export interface ClientEntity {
   city: string;
   postalCode: string;
   country: string;
+  peppolScheme: string | null;
+  peppolId: string | null;
+  deliveryMode: DeliveryMode;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -20,6 +25,9 @@ export type CreateClientData = {
   city?: string;
   postalCode?: string;
   country?: string;
+  peppolScheme?: string | null;
+  peppolId?: string | null;
+  deliveryMode?: DeliveryMode;
 };
 
 export type UpdateClientData = Partial<CreateClientData>;

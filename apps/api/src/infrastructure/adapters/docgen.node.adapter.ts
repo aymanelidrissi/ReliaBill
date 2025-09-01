@@ -16,7 +16,10 @@ const xmlEscape = (s: string) =>
 
 const fmtDate = (d: string | Date) => (d instanceof Date ? d : new Date(d)).toISOString().slice(0, 10);
 
-function normParty(p: any, fallbackName: string): DocParty {
+function normParty(
+  p: any,
+  fallbackName: string
+): DocParty & { peppolId?: string | null; peppolScheme?: string | null } {
   return {
     name: p?.name || p?.legalName || fallbackName,
     vat: p?.vat ?? null,
@@ -27,13 +30,23 @@ function normParty(p: any, fallbackName: string): DocParty {
     email: p?.email ?? null,
     iban: p?.iban ?? null,
     bic: p?.bic ?? null,
+    peppolId: p?.peppolId ?? null,
+    peppolScheme: p?.peppolScheme ?? null,
   };
 }
 
 function toModel(input: { invoice: any; company: any; client: any }): InvoiceDocModel {
   const inv = input.invoice || {};
-  const supplier = normParty(input.company, 'Supplier');
-  const customer = normParty(input.client, 'Customer');
+  const supplier = {
+    ...normParty(input.company, 'Supplier'),
+    peppolId: input.company?.peppolId ?? process.env.SUPPLIER_PEPPOL_ID ?? null,
+    peppolScheme: input.company?.peppolScheme ?? process.env.SUPPLIER_PEPPOL_SCHEME ?? 'iso6523-actorid-upis',
+  };
+  const customer = {
+    ...normParty(input.client, 'Customer'),
+    peppolId: input.client?.peppolId ?? null,
+    peppolScheme: input.client?.peppolScheme ?? 'iso6523-actorid-upis',
+  };
 
   const lines: DocLine[] = (inv.lines || []).map((l: any, i: number) => ({
     id: String(i + 1),
@@ -75,6 +88,27 @@ function toModel(input: { invoice: any; company: any; client: any }): InvoiceDoc
     totalIncl,
     taxSubtotals,
   };
+}
+
+function normalizeEas(input: { scheme?: string; id?: string }) {
+  const rawId = (input.id ?? '').trim();
+  const rawScheme = (input.scheme ?? '').trim();
+  const prefixed = rawId.match(/^(\d{4}):(.+)$/);
+  if (prefixed) return { scheme: prefixed[1], id: prefixed[2] };
+  if (/^\d{4}$/.test(rawScheme)) {
+    return { scheme: rawScheme, id: rawId.replace(/^\d{4}:/, '') };
+  }
+  // Unknown/blank scheme: leave out
+  return { scheme: '', id: rawId.replace(/^\d{4}:/, '') };
+}
+
+function endpointIdXML(p: { peppolId?: string | null; peppolScheme?: string | null }): string {
+  const id = p?.peppolId ?? '';
+  if (!id) return '';
+  const { scheme, id: val } = normalizeEas({ scheme: p?.peppolScheme ?? undefined, id });
+  return scheme && val
+    ? `<cbc:EndpointID schemeID="${xmlEscape(scheme)}">${xmlEscape(val)}</cbc:EndpointID>`
+    : '';
 }
 
 function sanitizeWinAnsi(s: string): string {
@@ -135,11 +169,7 @@ function toAbsolute(pth: string): string {
   if (path.isAbsolute(pth)) return pth;
   const cwd = process.cwd();
   const appsApi = path.resolve(cwd, 'apps', 'api');
-  const candidates = [
-    path.resolve(cwd, pth),
-    path.resolve(appsApi, pth),
-    path.resolve(cwd, 'apps', 'api', pth),
-  ];
+  const candidates = [path.resolve(cwd, pth), path.resolve(appsApi, pth), path.resolve(cwd, 'apps', 'api', pth)];
   for (const c of candidates) if (fssync.existsSync(c)) return c;
   return path.resolve(candidates[0]);
 }
@@ -158,45 +188,67 @@ async function readLogo(): Promise<Uint8Array | null> {
 
 function paymentMeansXML(p: DocParty): string {
   if (!p?.iban) return '';
-  const bic = p.bic ? `<cac:FinancialInstitutionBranch><cbc:ID>${xmlEscape(p.bic)}</cbc:ID></cac:FinancialInstitutionBranch>` : '';
+  const bic = p.bic
+    ? `<cac:FinancialInstitutionBranch><cbc:ID>${xmlEscape(p.bic)}</cbc:ID></cac:FinancialInstitutionBranch>`
+    : '';
   return `
   <cac:PaymentMeans>
     <cbc:PaymentMeansCode>30</cbc:PaymentMeansCode>
     <cac:PayeeFinancialAccount>
-      <cbc:ID>${xmlEscape(p.iban)}</cbc:ID>
+      <cbc:ID schemeID="IBAN">${xmlEscape(p.iban)}</cbc:ID>
       ${bic}
     </cac:PayeeFinancialAccount>
   </cac:PaymentMeans>`;
 }
 
 function buildUBL(doc: InvoiceDocModel): string {
-  const party = (p: DocParty, role: 'AccountingSupplierParty' | 'AccountingCustomerParty') => `
+  const party = (
+    p: DocParty & { peppolId?: string | null; peppolScheme?: string | null },
+    role: 'AccountingSupplierParty' | 'AccountingCustomerParty'
+  ) => `
   <cac:${role}>
     <cac:Party>
+      ${endpointIdXML(p)}
       <cac:PartyName><cbc:Name>${xmlEscape(p.name)}</cbc:Name></cac:PartyName>
-      ${p.vat ? `<cac:PartyTaxScheme><cbc:CompanyID>${xmlEscape(p.vat)}</cbc:CompanyID></cac:PartyTaxScheme>` : ''}
+
       <cac:PostalAddress>
         ${p.street ? `<cbc:StreetName>${xmlEscape(p.street)}</cbc:StreetName>` : ''}
         ${p.city ? `<cbc:CityName>${xmlEscape(p.city)}</cbc:CityName>` : ''}
         ${p.postalCode ? `<cbc:PostalZone>${xmlEscape(p.postalCode)}</cbc:PostalZone>` : ''}
-        <cbc:CountrySubentity></cbc:CountrySubentity>
         <cac:Country><cbc:IdentificationCode>${xmlEscape(p.countryCode || 'BE')}</cbc:IdentificationCode></cac:Country>
       </cac:PostalAddress>
+
+      ${p.vat ? `
+      <cac:PartyTaxScheme>
+        <cbc:CompanyID>${xmlEscape(p.vat)}</cbc:CompanyID>
+        <cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme>
+      </cac:PartyTaxScheme>` : ''}
+
+      <cac:PartyLegalEntity>
+        <cbc:RegistrationName>${xmlEscape(p.name)}</cbc:RegistrationName>
+        ${p.vat ? `<cbc:CompanyID>${xmlEscape(p.vat)}</cbc:CompanyID>` : ''}
+      </cac:PartyLegalEntity>
+
       ${p.email ? `<cac:Contact><cbc:ElectronicMail>${xmlEscape(p.email)}</cbc:ElectronicMail></cac:Contact>` : ''}
-      ${p.iban
-      ? `<cac:PartyFinancialAccount><cbc:ID>${xmlEscape(p.iban)}</cbc:ID>${p.bic ? `<cac:FinancialInstitutionBranch><cbc:ID>${xmlEscape(p.bic)}</cbc:ID></cac:FinancialInstitutionBranch>` : ''}</cac:PartyFinancialAccount>`
-      : ''
-    }
     </cac:Party>
   </cac:${role}>`;
 
-  const lines = doc.lines.map((l, i) => `
+  const itemName = (raw: string | undefined | null, index1: number): string => {
+    const base = (raw ?? '').toString().trim().replace(/\s+/g, ' ');
+    const name = base.length ? base.slice(0, 120) : `Item ${index1}`;
+    return xmlEscape(name);
+  };
+
+  const lines = doc.lines
+    .map(
+      (l, i) => `
   <cac:InvoiceLine>
     <cbc:ID>${i + 1}</cbc:ID>
-    <cbc:InvoicedQuantity>${toFixed2(l.quantity)}</cbc:InvoicedQuantity>
+    <cbc:InvoicedQuantity unitCode="C62">${toFixed2(l.quantity)}</cbc:InvoicedQuantity>
     <cbc:LineExtensionAmount currencyID="${doc.currency}">${toFixed2(round2(l.quantity * l.unitPrice))}</cbc:LineExtensionAmount>
     <cac:Item>
-      <cbc:Description>${xmlEscape(l.description)}</cbc:Description>
+      ${l.description ? `<cbc:Description>${xmlEscape(l.description)}</cbc:Description>` : ''}
+      <cbc:Name>${itemName(l.description, i + 1)}</cbc:Name>
       <cac:ClassifiedTaxCategory>
         <cbc:ID>S</cbc:ID>
         <cbc:Percent>${toFixed2(l.vatRate)}</cbc:Percent>
@@ -204,9 +256,13 @@ function buildUBL(doc: InvoiceDocModel): string {
       </cac:ClassifiedTaxCategory>
     </cac:Item>
     <cac:Price><cbc:PriceAmount currencyID="${doc.currency}">${toFixed2(l.unitPrice)}</cbc:PriceAmount></cac:Price>
-  </cac:InvoiceLine>`).join('');
+  </cac:InvoiceLine>`
+    )
+    .join('');
 
-  const subtotals = doc.taxSubtotals.map(t => `
+  const subtotals = doc.taxSubtotals
+    .map(
+      (t) => `
     <cac:TaxSubtotal>
       <cbc:TaxableAmount currencyID="${doc.currency}">${toFixed2(t.taxable)}</cbc:TaxableAmount>
       <cbc:TaxAmount currencyID="${doc.currency}">${toFixed2(t.tax)}</cbc:TaxAmount>
@@ -215,7 +271,15 @@ function buildUBL(doc: InvoiceDocModel): string {
         <cbc:Percent>${toFixed2(t.rate)}</cbc:Percent>
         <cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme>
       </cac:TaxCategory>
-    </cac:TaxSubtotal>`).join('');
+    </cac:TaxSubtotal>`
+    )
+    .join('');
+
+  const taxTotalBlock = `
+  <cac:TaxTotal>
+    <cbc:TaxAmount currencyID="${doc.currency}">${toFixed2(doc.totalVat)}</cbc:TaxAmount>
+    ${subtotals}
+  </cac:TaxTotal>`;
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
@@ -231,10 +295,7 @@ function buildUBL(doc: InvoiceDocModel): string {
   ${party(doc.supplier, 'AccountingSupplierParty')}
   ${party(doc.customer, 'AccountingCustomerParty')}
   ${paymentMeansXML(doc.supplier)}
-  <cac:TaxTotal>
-    ${subtotals}
-    <cbc:TaxAmount currencyID="${doc.currency}">${toFixed2(doc.totalVat)}</cbc:TaxAmount>
-  </cac:TaxTotal>
+  ${taxTotalBlock}
   <cac:LegalMonetaryTotal>
     <cbc:LineExtensionAmount currencyID="${doc.currency}">${toFixed2(doc.totalExcl)}</cbc:LineExtensionAmount>
     <cbc:TaxExclusiveAmount currencyID="${doc.currency}">${toFixed2(doc.totalExcl)}</cbc:TaxExclusiveAmount>

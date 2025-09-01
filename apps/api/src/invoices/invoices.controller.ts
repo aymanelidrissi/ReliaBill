@@ -26,7 +26,7 @@ export class InvoicesController {
   constructor(
     private readonly service: InvoiceService,
     private readonly docs: InvoiceDocumentsService,
-  ) {}
+  ) { }
 
   @Get()
   async list(
@@ -43,7 +43,6 @@ export class InvoicesController {
       const l = Number.isFinite(+limit!) && +limit! > 0 ? +limit! : 10;
       const df = this.parseDateOpt(dateFrom, 'dateFrom');
       const dt = this.parseDateOpt(dateTo, 'dateTo');
-
       return await this.service.list(req.user.id, {
         page: p,
         limit: l,
@@ -95,24 +94,16 @@ export class InvoicesController {
   }
 
   @Post(':id/prepare')
-  async prepare(
-    @Req() req: any,
-    @Param('id') id: string,
-    @Query('force') force?: string,
-  ) {
+  async prepare(@Req() req: any, @Param('id') id: string, @Query('force') force?: string) {
     const f = (force ?? '').toLowerCase();
     const isForce = f === '1' || f === 'true' || f === 'yes';
-
     const inv = await this.service.get(req.user.id, id);
     if (!inv) throw new NotFoundException('Invoice not found');
-
     const hasXml = !!this.resolveArtifactPath(inv?.xmlPath);
     const hasPdf = !!this.resolveArtifactPath(inv?.pdfPath);
-
     if (!isForce && inv.status === 'READY' && hasXml && hasPdf) {
       return { status: 'READY', xmlPath: inv.xmlPath, pdfPath: inv.pdfPath };
     }
-
     return this.docs.prepare(req.user.id, id);
   }
 
@@ -121,7 +112,6 @@ export class InvoicesController {
     const inv = await this.service.get(req.user.id, id);
     const abs = this.resolveArtifactPath(inv?.pdfPath);
     if (!abs) throw new NotFoundException('PDF not found');
-
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${path.basename(abs)}"`);
     fs.createReadStream(abs).pipe(res);
@@ -132,7 +122,6 @@ export class InvoicesController {
     const inv = await this.service.get(req.user.id, id);
     const abs = this.resolveArtifactPath(inv?.xmlPath);
     if (!abs) throw new NotFoundException('XML not found');
-
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${path.basename(abs)}"`);
     fs.createReadStream(abs).pipe(res);
@@ -140,6 +129,11 @@ export class InvoicesController {
 
   @Post(':id/send')
   async send(@Req() req: any, @Param('id') id: string) {
+    const inv = await this.service.get(req.user.id, id);
+    if (!inv) throw new NotFoundException('Invoice not found');
+    if (inv.status === 'SENT' || inv.status === 'DELIVERED') {
+      return { id: inv.id, messageId: inv.hermesMessageId ?? null, status: inv.status, route: 'PEPPOL' };
+    }
     return this.docs.send(req.user.id, id);
   }
 
@@ -149,7 +143,12 @@ export class InvoicesController {
   }
 
   @Get(':id/refresh-status')
-  async refresh(@Req() req: any, @Param('id') id: string) {
+  async refreshGet(@Req() req: any, @Param('id') id: string) {
+    return this.docs.refreshStatus(req.user.id, id);
+  }
+
+  @Post(':id/refresh-status')
+  async refreshPost(@Req() req: any, @Param('id') id: string) {
     return this.docs.refreshStatus(req.user.id, id);
   }
 
@@ -162,26 +161,19 @@ export class InvoicesController {
 
   private resolveArtifactPath(stored: string | null | undefined): string | null {
     if (!stored) return null;
-
     let rel = String(stored).replace(/[\\/]+/g, path.sep);
-
     const legacyPrefix = 'storage' + path.sep;
     if (rel.startsWith(legacyPrefix)) rel = rel.slice(legacyPrefix.length);
-
     if (path.isAbsolute(rel) && fs.existsSync(rel)) return rel;
-
     const base = process.env.DOCS_DIR
-      ? (path.isAbsolute(process.env.DOCS_DIR)
-          ? process.env.DOCS_DIR
-          : path.resolve(process.cwd(), process.env.DOCS_DIR))
+      ? path.isAbsolute(process.env.DOCS_DIR)
+        ? process.env.DOCS_DIR
+        : path.resolve(process.cwd(), process.env.DOCS_DIR)
       : path.resolve(process.cwd(), 'storage');
-
     const abs = path.resolve(base, rel);
     if (fs.existsSync(abs)) return abs;
-
     const alt = path.resolve(process.cwd(), rel);
     if (fs.existsSync(alt)) return alt;
-
     return null;
   }
 }

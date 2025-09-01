@@ -20,7 +20,10 @@ export class PrismaClientsRepo implements ClientsRepoPort {
 
     const where: any = { companyId };
     if (opts.query) {
-      where.name = { contains: opts.query, mode: 'insensitive' };
+      where.OR = [
+        { name: { contains: opts.query, mode: 'insensitive' } },
+        { peppolId: { contains: opts.query, mode: 'insensitive' } },
+      ];
     }
 
     const [total, items] = await this.prisma.$transaction([
@@ -33,11 +36,11 @@ export class PrismaClientsRepo implements ClientsRepoPort {
       }),
     ]);
 
-    return { items: items as any, total, page, limit };
+    return { items: items as unknown as ClientEntity[], total, page, limit };
   }
 
   findByIdForCompany(companyId: string, id: string) {
-    return this.prisma.client.findFirst({ where: { id, companyId } }) as any;
+    return this.prisma.client.findFirst({ where: { id, companyId } }) as unknown as Promise<ClientEntity | null>;
   }
 
   create(companyId: string, data: CreateClientData) {
@@ -51,8 +54,11 @@ export class PrismaClientsRepo implements ClientsRepoPort {
         city: data.city ?? '',
         postalCode: data.postalCode ?? '',
         country: data.country ?? 'BE',
+        peppolScheme: data.peppolScheme ?? undefined,
+        peppolId: data.peppolId ?? null,
+        deliveryMode: data.deliveryMode ?? undefined,
       },
-    }) as any;
+    }) as unknown as Promise<ClientEntity>;
   }
 
   update(companyId: string, id: string, data: UpdateClientData) {
@@ -66,13 +72,27 @@ export class PrismaClientsRepo implements ClientsRepoPort {
         city: data.city,
         postalCode: data.postalCode,
         country: data.country,
+        peppolScheme: data.peppolScheme ?? undefined,
+        peppolId: data.peppolId ?? null,
+        deliveryMode: data.deliveryMode ?? undefined,
       },
       select: {
-        id: true, companyId: true, name: true, vat: true, email: true,
-        street: true, city: true, postalCode: true, country: true,
-        createdAt: true, updatedAt: true,
+        id: true,
+        companyId: true,
+        name: true,
+        vat: true,
+        email: true,
+        street: true,
+        city: true,
+        postalCode: true,
+        country: true,
+        peppolScheme: true,
+        peppolId: true,
+        deliveryMode: true,
+        createdAt: true,
+        updatedAt: true,
       },
-    }) as any;
+    }) as unknown as Promise<ClientEntity>;
   }
 
   async delete(companyId: string, id: string) {

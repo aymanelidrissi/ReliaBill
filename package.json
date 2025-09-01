@@ -20,7 +20,8 @@
     "db:generate": "pnpm exec dotenv -e .env -- pnpm dlx prisma generate --schema apps/api/prisma/schema.prisma",
     "login:token": "pnpm exec dotenv -e .env -- node scripts/dev-login.js",
     "api:me": "pnpm exec dotenv -e .env -- node scripts/api-me.js",
-    "zip:project": "node ./scripts/zip-project.js"
+    "zip:project": "node ./scripts/zip-project.js",
+    "send:acube": "node scripts/send-acube.js --pause"
   },
   "dependencies": {
     "@nestjs/mapped-types": "*",

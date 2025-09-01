@@ -164,7 +164,7 @@ ok "company updated"
 # Clients
 log "Create client A"
 clientA_body=$(cat <<'JSON'
-{"name":"Client SA","vat":"BE9876543210","email":"acc@client.test","street":"Rue 2","city":"Liège","postalCode":"4000","country":"BE"}
+{"name":"Client SA","vat":"BE9876543210","email":"acc@client.test","street":"Rue 2","city":"Liège","postalCode":"4000","country":"BE","deliveryMode":"HERMES"}
 JSON
 )
 clientA_json=$(api POST /clients "$clientA_body")
@@ -172,9 +172,10 @@ CLIENT_A_ID=$(json_get "$clientA_json" "id"); [[ -n "$CLIENT_A_ID" ]] || fail "c
 
 log "Create client B"
 clientB_body=$(cat <<'JSON'
-{"name":"Globex NV","email":"ap@globex.test","street":"Keizer 3","city":"Antwerpen","postalCode":"2000","country":"BE"}
+{"name":"Globex NV","email":"ap@globex.test","street":"Keizer 3","city":"Antwerpen","postalCode":"2000","country":"BE","deliveryMode":"HERMES"}
 JSON
 )
+
 clientB_json=$(api POST /clients "$clientB_body")
 CLIENT_B_ID=$(json_get "$clientB_json" "id"); [[ -n "$CLIENT_B_ID" ]] || fail "client B not created"; ok "client B: $CLIENT_B_ID"
 
@@ -190,6 +191,37 @@ JSON
 clientA_upd_json=$(api PUT "/clients/$CLIENT_A_ID" "$clientA_upd")
 [[ "$(json_get "$clientA_upd_json" "name")" == "Client SA Updated" ]] || fail "client A update failed"
 ok "client A updated"
+
+# Client C with PEPPOL identity (stub mode)
+log "Create client C (PEPPOL)"
+clientC_body=$(cat <<'JSON'
+{"name":"Peppol Client","peppolScheme":"iso6523-actorid-upis","peppolId":"9930:123456789","deliveryMode":"PEPPOL"}
+JSON
+)
+clientC_json=$(api POST /clients "$clientC_body")
+CLIENT_C_ID=$(json_get "$clientC_json" "id"); [[ -n "$CLIENT_C_ID" ]] || fail "client C not created"; ok "client C: $CLIENT_C_ID"
+
+# Invoice 3 for client C, prepare, send over PEPPOL (stub)
+log "Create invoice 3 (Client C, PEPPOL)"
+inv3_body=$(cat <<JSON
+{"clientId":"$CLIENT_C_ID","issueDate":"$TODAY","dueDate":"$NEXT_MONTH","currency":"EUR","lines":[{"description":"Integration","quantity":1,"unitPrice":1120,"vatRate":21}]}
+JSON
+)
+inv3_json=$(api POST /invoices "$inv3_body")
+INV3_ID=$(json_get "$inv3_json" "id"); [[ -n "$INV3_ID" ]] || fail "invoice 3 not created"; ok "invoice3: $INV3_ID"
+
+log "Prepare invoice 3"
+prep3_json=$(api POST "/invoices/$INV3_ID/prepare")
+[[ "$(json_get "$prep3_json" "status" | tr '[:lower:]' '[:upper:]')" == "READY" ]] || { echo "$prep3_json"|json_pp; fail "prepare invoice 3"; }
+ok "invoice 3 prepared"
+
+log "Send invoice 3 (PEPPOL stub)"
+send3_json=$(api POST "/invoices/$INV3_ID/send")
+route3="$(json_get "$send3_json" "route")"
+msg3="$(json_get "$send3_json" "messageId")"
+[[ "$route3" == "PEPPOL" && -n "$msg3" ]] || { echo "$send3_json"|json_pp; fail "send invoice 3 over PEPPOL"; }
+ok "invoice 3 sent via PEPPOL (stub)"
+
 
 # Invoices
 log "Create invoice 1 (Client A)"

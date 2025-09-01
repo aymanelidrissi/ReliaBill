@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import { CompaniesModule } from './companies/companies.module';
 import { ClientsModule } from './clients/clients.module';
 import { InvoicesModule } from './invoices/invoices.module';
+import { PeppolWebhookController } from './peppol/peppol.webhook.controller';
 
 @Module({
   imports: [
@@ -21,6 +22,6 @@ import { InvoicesModule } from './invoices/invoices.module';
     ClientsModule,
     InvoicesModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, PeppolWebhookController],
 })
-export class AppModule {}
+export class AppModule { }
