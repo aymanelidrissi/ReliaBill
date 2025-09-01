@@ -4,6 +4,12 @@ import { ValidationPipe } from '@nestjs/common';
 import * as path from 'path';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
+import * as dotenv from 'dotenv';
+
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+if (!process.env.COOKIE_NAME || !process.env.CSRF_ENABLED) {
+  dotenv.config({ path: path.resolve(process.cwd(), '../../.env') });
+}
 
 function getOrigins(): (string | RegExp)[] {
   const raw = process.env.CORS_ORIGIN || 'http://localhost:3000';
