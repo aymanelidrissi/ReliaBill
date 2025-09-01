@@ -1,255 +1,103 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { api } from '@/lib/api';
-import { toast } from 'sonner';
-
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from '@/components/ui/table';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { toast } from 'sonner';
 
-type Client = { id: string; name: string; vat?: string | null };
-
-type UiLine = {
-  description: string;
-  quantity: string;
-  unitPrice: string;
-  vatRate: string;
+type Invoice = {
+  id: string;
+  number: string;
+  issueDate: string;
+  dueDate: string;
+  currency: string;
+  totalIncl: number;
+  status: 'DRAFT'|'READY'|'SENT'|'DELIVERED'|'FAILED';
 };
 
-function isoToday() {
-  return new Date().toISOString().slice(0, 10);
-}
-function isoPlusDays(baseISO: string, days: number) {
-  const d = new Date(baseISO);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-const toNum = (v: string) => (v.trim() === '' ? NaN : Number(v));
+export default function InvoicesPage() {
+  const [items, setItems] = useState<Invoice[]>([]);
+  const [query, setQuery] = useState('');
+  const [status, setStatus] = useState<string>('all');
 
-export default function NewInvoicePage() {
-  const router = useRouter();
-
-  const [clients, setClients] = useState<Client[]>([]);
-  const [clientId, setClientId] = useState<string>('');
-  const [currency, setCurrency] = useState('EUR');
-  const [issueDate, setIssueDate] = useState(isoToday());
-  const [dueDate, setDueDate] = useState(isoPlusDays(isoToday(), 14));
-  const [busy, setBusy] = useState(false);
-
-  const [lines, setLines] = useState<UiLine[]>([
-    { description: '', quantity: '1', unitPrice: '0', vatRate: '21' },
-  ]);
-
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const data = await api<{ items: any[] }>('/clients?limit=100&page=1');
-        const items = Array.isArray(data?.items) ? data.items : [];
-        setClients(items.map(c => ({ id: c.id, name: c.name, vat: c.vat ?? null })));
-      } catch {
-        toast.error('Failed to load clients');
-      }
-    };
-    load();
-  }, []);
-
-  const setLine = (i: number, patch: Partial<UiLine>) =>
-    setLines(prev => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
-
-  const addLine = () =>
-    setLines(prev => [...prev, { description: '', quantity: '1', unitPrice: '0', vatRate: '21' }]);
-
-  const removeLine = (i: number) =>
-    setLines(prev => prev.filter((_, idx) => idx !== i));
-
-  const submitting = useMemo(() => {
-    if (busy || lines.length === 0) return true;
-    for (const l of lines) {
-      if (!l.description.trim()) return true;
-      const q = toNum(l.quantity);
-      if (!Number.isFinite(q) || q <= 0) return true;
-    }
-    return false;
-  }, [busy, lines]);
-
-  const submit = async () => {
-    setBusy(true);
+  async function load() {
     try {
-      const payload: any = {
-        currency,
-        issueDate,
-        dueDate,
-        lines: lines.map(l => ({
-          description: l.description.trim(),
-          quantity: Number.isFinite(toNum(l.quantity)) ? Number(l.quantity) : 0,
-          unitPrice: Number.isFinite(toNum(l.unitPrice)) ? Number(l.unitPrice) : 0,
-          vatRate: Number.isFinite(toNum(l.vatRate)) ? Number(l.vatRate) : 0,
-        })),
-      };
-      if (clientId && clientId !== 'none') payload.clientId = clientId;
-
-      await api('/invoices', { method: 'POST', body: JSON.stringify(payload) });
-      toast.success('Created');
-      router.push('/invoices');
+      const token = localStorage.getItem('rb.token') || '';
+      const qs = new URLSearchParams({ page: '1', limit: '50' });
+      if (query) qs.set('query', query);
+      if (status !== 'all') qs.set('status', status);
+      const r = await fetch(`/rb/invoices?${qs}`, { headers: { Authorization: token ? `Bearer ${token}` : '' } });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      setItems(Array.isArray(data?.items) ? data.items : []);
     } catch (e: any) {
-      const msg = String(e?.message || e || 'Failed');
-      const friendly =
-        msg.includes('Client not found') || msg.includes('CLIENT_NOT_FOUND')
-          ? 'Client not found. Pick a client from the list.'
-          : msg.includes('NO_LINES')
-          ? 'Add at least one line.'
-          : msg.includes('BAD_DATES')
-          ? 'Dates are invalid.'
-          : msg.includes('DUE_BEFORE_ISSUE')
-          ? 'Due date must be after issue date.'
-          : msg;
-      toast.error(friendly);
-    } finally {
-      setBusy(false);
+      toast.error(String(e));
     }
-  };
+  }
+
+  useEffect(() => { load(); }, []);
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">New Invoice</h1>
-
-      <Card>
-        <CardContent className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>Client</Label>
-            <Select value={clientId} onValueChange={setClientId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select client (optional)" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">No client</SelectItem>
-                {clients.map(c => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.name} {c.vat ? `· ${c.vat}` : ''}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="currency">Currency</Label>
-            <Input
-              id="currency"
-              value={currency}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                setCurrency(e.target.value.toUpperCase())
-              }
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="issue">Issue Date</Label>
-            <Input
-              id="issue"
-              type="date"
-              value={issueDate}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setIssueDate(e.target.value)}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="due">Due Date</Label>
-            <Input
-              id="due"
-              type="date"
-              value={dueDate}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDueDate(e.target.value)}
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      <div className="rounded-md border overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Description</TableHead>
-              <TableHead className="w-28">Qty</TableHead>
-              <TableHead className="w-36">Price per unit</TableHead>
-              <TableHead className="w-28">VAT %</TableHead>
-              <TableHead className="w-28 text-right" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {lines.map((l, i) => (
-              <TableRow key={i}>
-                <TableCell>
-                  <Input
-                    value={l.description}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                      setLine(i, { description: e.target.value })
-                    }
-                    placeholder="Work description"
-                  />
-                </TableCell>
-                <TableCell>
-                  <Input
-                    type="number"
-                    inputMode="numeric"
-                    step={1}
-                    min={0}
-                    value={l.quantity}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                      setLine(i, { quantity: e.target.value })
-                    }
-                  />
-                </TableCell>
-                <TableCell>
-                  <Input
-                    type="number"
-                    inputMode="numeric"
-                    step={1}
-                    min={0}
-                    value={l.unitPrice}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                      setLine(i, { unitPrice: e.target.value })
-                    }
-                  />
-                </TableCell>
-                <TableCell>
-                  <Input
-                    type="number"
-                    inputMode="numeric"
-                    step={1}
-                    min={0}
-                    value={l.vatRate}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                      setLine(i, { vatRate: e.target.value })
-                    }
-                  />
-                </TableCell>
-                <TableCell className="text-right">
-                  <Button variant="secondary" size="sm" onClick={() => removeLine(i)}>
-                    Remove
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-            <TableRow>
-              <TableCell colSpan={5}>
-                <Button size="sm" onClick={addLine}>Add line</Button>
-              </TableCell>
-            </TableRow>
-          </TableBody>
-        </Table>
+    <div className="max-w-6xl mx-auto p-6 space-y-6">
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold">Invoices</h1>
+        <div className="flex items-center gap-2">
+          <Input placeholder="Search…" value={query} onChange={(e) => setQuery(e.target.value)} className="w-56" />
+          <Select value={status} onValueChange={setStatus}>
+            <SelectTrigger className="w-40">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All</SelectItem>
+              <SelectItem value="DRAFT">Draft</SelectItem>
+              <SelectItem value="READY">Ready</SelectItem>
+              <SelectItem value="SENT">Sent</SelectItem>
+              <SelectItem value="DELIVERED">Delivered</SelectItem>
+              <SelectItem value="FAILED">Failed</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button onClick={load}>Filter</Button>
+          <Link href="/invoices/new"><Button>Create</Button></Link>
+        </div>
       </div>
 
-      <Button onClick={submit} disabled={submitting}>Create</Button>
+      <Card>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-44">Number</TableHead>
+                <TableHead className="w-40">Issue</TableHead>
+                <TableHead className="w-40">Due</TableHead>
+                <TableHead className="w-32">Status</TableHead>
+                <TableHead className="w-32 text-right">Total</TableHead>
+                <TableHead className="w-32" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.map(inv => (
+                <TableRow key={inv.id}>
+                  <TableCell>{inv.number}</TableCell>
+                  <TableCell>{inv.issueDate.slice(0,10)}</TableCell>
+                  <TableCell>{inv.dueDate.slice(0,10)}</TableCell>
+                  <TableCell>{inv.status}</TableCell>
+                  <TableCell className="text-right">{inv.totalIncl.toFixed(2)} {inv.currency}</TableCell>
+                  <TableCell className="text-right">
+                    <Link href={`/invoices/${inv.id}`}><Button size="sm" variant="secondary">Open</Button></Link>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {items.length === 0 && (
+                <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No invoices</TableCell></TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
     </div>
   );
 }
