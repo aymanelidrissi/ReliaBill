@@ -15,11 +15,17 @@ export async function api<T = any>(path: string, init: RequestInit = {}): Promis
     if (!headers.has("Content-Type") && init.body && !(init.body instanceof FormData)) {
         headers.set("Content-Type", "application/json");
     }
+    
     if (token && !headers.has("Authorization")) {
         headers.set("Authorization", `Bearer ${token}`);
     }
 
-    const res = await fetch(join(base, path), { ...init, headers, cache: "no-store" });
+    const res = await fetch(join(base, path), {
+        ...init,
+        headers,
+        cache: "no-store",
+        credentials: "include",
+    });
 
     if (res.status === 401) {
         if (typeof window !== "undefined") {
@@ -52,8 +58,12 @@ export async function download(path: string, filename: string) {
     const token =
         getToken() || (typeof window !== "undefined" ? localStorage.getItem("rb.token") : null);
 
+    const headers = new Headers();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+
     const res = await fetch(join(base, path), {
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        headers,
+        credentials: "include",
     });
     if (!res.ok) {
         const txt = await res.text().catch(() => "");
@@ -68,4 +78,16 @@ export async function download(path: string, filename: string) {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+}
+
+export async function logout() {
+    try {
+        await api("/auth/logout", { method: "POST" });
+    } catch {
+    }
+    try {
+        localStorage.removeItem("rb.token");
+        document.cookie = "rb.token=; Path=/; Max-Age=0";
+    } catch { }
+    if (typeof window !== "undefined") window.location.href = "/login";
 }

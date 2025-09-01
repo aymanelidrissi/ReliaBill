@@ -7,6 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+import { getBase } from "@/lib/store";
 
 export default function LoginPage() {
     const router = useRouter();
@@ -16,7 +17,17 @@ export default function LoginPage() {
     const [busy, setBusy] = useState(false);
 
     useEffect(() => {
-        const existing = localStorage.getItem("rb.token");
+        (async () => {
+            try {
+                const base = getBase();
+                const r = await fetch(`${base}/auth/me`, { credentials: "include" });
+                if (r.ok) router.replace(sp.get("next") || "/invoices");
+            } catch {
+               
+            }
+        })();
+
+        const existing = typeof window !== "undefined" ? localStorage.getItem("rb.token") : null;
         if (existing) router.replace(sp.get("next") || "/invoices");
     }, [router, sp]);
 
@@ -24,25 +35,22 @@ export default function LoginPage() {
         e.preventDefault();
         setBusy(true);
         try {
-            const res = await fetch("/rb/auth/login", {
+            const base = getBase();
+            const res = await fetch(`${base}/auth/login`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
+                credentials: "include",
                 body: JSON.stringify({ email, password }),
             });
 
             const text = await res.text();
             if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
 
-            let token = "";
             try {
                 const json = JSON.parse(text);
-                token = json.access_token || json.accessToken || json.token || "";
-            } catch {
-            }
-            if (!token) throw new Error("Login succeeded but no token returned");
-
-            localStorage.setItem("rb.token", token);
-            document.cookie = `rb.token=${encodeURIComponent(token)}; Path=/; Max-Age=${60 * 60 * 24 * 7}`;
+                const token = json.access_token || json.accessToken || json.token || "";
+                if (token) localStorage.setItem("rb.token", token);
+            } catch {  }
 
             toast.success("Logged in");
             router.replace(sp.get("next") || "/invoices");
