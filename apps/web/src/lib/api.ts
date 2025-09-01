@@ -1,4 +1,4 @@
-import { getBase } from "./store";
+import { getBase, getToken } from "./store";
 
 function join(base: string, path: string) {
     const b = base.endsWith("/") ? base.slice(0, -1) : base;
@@ -6,12 +6,35 @@ function join(base: string, path: string) {
     return `${b}${p}`;
 }
 
+function readCookie(name: string): string {
+    if (typeof document === "undefined") return "";
+    const re = new RegExp(
+        "(?:^|; )" + name.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&") + "=([^;]*)"
+    );
+    const m = document.cookie.match(re);
+    return m ? decodeURIComponent(m[1]) : "";
+}
+
 export async function api<T = any>(path: string, init: RequestInit = {}): Promise<T> {
     const base = getBase() || "/rb";
+    const token =
+        getToken() || (typeof window !== "undefined" ? localStorage.getItem("rb.token") : null);
 
     const headers = new Headers(init.headers || {});
     if (!headers.has("Content-Type") && init.body && !(init.body instanceof FormData)) {
         headers.set("Content-Type", "application/json");
+    }
+
+    if (token && !headers.has("Authorization")) {
+        headers.set("Authorization", `Bearer ${token}`);
+    }
+
+    const method = (init.method || "GET").toUpperCase();
+    const unsafe = !["GET", "HEAD", "OPTIONS"].includes(method);
+    if (unsafe && !headers.has("X-CSRF-Token")) {
+        const csrfCookieName = process.env.NEXT_PUBLIC_CSRF_COOKIE_NAME || "rb.csrf";
+        const csrfToken = readCookie(csrfCookieName);
+        if (csrfToken) headers.set("X-CSRF-Token", csrfToken);
     }
 
     const res = await fetch(join(base, path), {
@@ -23,6 +46,8 @@ export async function api<T = any>(path: string, init: RequestInit = {}): Promis
 
     if (res.status === 401) {
         if (typeof window !== "undefined") {
+            localStorage.removeItem("rb.token");
+            document.cookie = "rb.token=; Path=/; Max-Age=0";
             const next = encodeURIComponent(window.location.pathname + window.location.search);
             window.location.href = `/login?next=${next}`;
         }
@@ -47,7 +72,14 @@ export async function api<T = any>(path: string, init: RequestInit = {}): Promis
 
 export async function download(path: string, filename: string) {
     const base = getBase() || "/rb";
+    const token =
+        getToken() || (typeof window !== "undefined" ? localStorage.getItem("rb.token") : null);
+
+    const headers = new Headers();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+
     const res = await fetch(join(base, path), {
+        headers,
         credentials: "include",
     });
     if (!res.ok) {
@@ -68,6 +100,11 @@ export async function download(path: string, filename: string) {
 export async function logout() {
     try {
         await api("/auth/logout", { method: "POST" });
+    } catch {
+    }
+    try {
+        localStorage.removeItem("rb.token");
+        document.cookie = "rb.token=; Path=/; Max-Age=0";
     } catch { }
     if (typeof window !== "undefined") window.location.href = "/login";
 }
