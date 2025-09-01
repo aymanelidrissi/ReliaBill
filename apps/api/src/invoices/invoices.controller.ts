@@ -15,7 +15,6 @@ import {
 import type { Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
-
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { InvoiceService } from '../core/services/invoice.service';
 import { InvoiceDocumentsService } from '../core/services/invoice.documents.service';
@@ -26,7 +25,7 @@ export class InvoicesController {
   constructor(
     private readonly service: InvoiceService,
     private readonly docs: InvoiceDocumentsService,
-  ) { }
+  ) {}
 
   @Get()
   async list(
@@ -135,6 +134,16 @@ export class InvoicesController {
       return { id: inv.id, messageId: inv.hermesMessageId ?? null, status: inv.status, route: 'PEPPOL' };
     }
     return this.docs.send(req.user.id, id);
+  }
+
+  @Get(':id/validate')
+  async validateGet(@Req() req: any, @Param('id') id: string) {
+    return this.docs.validate(req.user.id, id);
+  }
+
+  @Post(':id/validate')
+  async validatePost(@Req() req: any, @Param('id') id: string) {
+    return this.docs.validate(req.user.id, id);
   }
 
   @Get(':id/logs')

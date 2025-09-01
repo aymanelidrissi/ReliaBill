@@ -92,17 +92,13 @@ export class InvoiceDocumentsService {
       include: { client: true },
     });
     if (!inv) throw new NotFoundException('Invoice not found');
-    if (inv.status !== 'READY' || !inv.xmlPath) {
-      throw new BadRequestException('Prepare documents before sending');
-    }
+    if (inv.status !== 'READY' || !inv.xmlPath) throw new BadRequestException('Prepare documents before sending');
 
     const xmlAbs = resolveStoredToAbs(inv.xmlPath);
     if (!xmlAbs || !fs.existsSync(xmlAbs)) throw new NotFoundException('XML document not found on disk');
 
     const wantsPeppol = inv.client?.deliveryMode === 'PEPPOL';
-    if (wantsPeppol && !inv.client?.peppolId) {
-      throw new BadRequestException('MISSING_PEPPOL_ID');
-    }
+    if (wantsPeppol && !inv.client?.peppolId) throw new BadRequestException('MISSING_PEPPOL_ID');
 
     const usePeppol = !!inv.client?.peppolId && inv.client?.deliveryMode !== 'HERMES';
     const route: SendRoute = usePeppol ? 'PEPPOL' : 'HERMES_FALLBACK';
@@ -111,18 +107,14 @@ export class InvoiceDocumentsService {
     let delivered = false;
 
     if (route === 'PEPPOL') {
-      const processId =
-        process.env.ACUBE_PROCESS || 'urn:fdc:peppol.eu:2017:poacc:billing:01:1.0';
+      const processId = process.env.ACUBE_PROCESS || 'urn:fdc:peppol.eu:2017:poacc:billing:01:1.0';
       const documentTypeId =
         process.env.ACUBE_DOC_TYPE ||
         'urn:oasis:names:specification:ubl:schema:xsd:Invoice-2::Invoice##urn:cen.eu:en16931:2017#compliant#urn:fdc:peppol.eu:2017:poacc:billing:3.0::2.1';
 
       const res = await this.peppol.send({
         xmlPath: xmlAbs,
-        recipient: {
-          scheme: inv.client!.peppolScheme || 'iso6523-actorid-upis',
-          id: inv.client!.peppolId!,
-        },
+        recipient: { scheme: inv.client!.peppolScheme || 'iso6523-actorid-upis', id: inv.client!.peppolId! },
         processId,
         documentTypeId,
       });
@@ -165,7 +157,6 @@ export class InvoiceDocumentsService {
     let newStatus = inv.status;
     let provider = 'hermes';
 
-    // If the adapter exposes `status`, use it. Otherwise fall back to Hermes.
     const peppolHasStatus = typeof (this.peppol as any).status === 'function';
 
     if (inv.client?.deliveryMode === 'PEPPOL' && peppolHasStatus) {
@@ -193,6 +184,18 @@ export class InvoiceDocumentsService {
     });
 
     return { id: inv.id, status: newStatus };
+  }
+
+  async validate(userId: string, invoiceId: string) {
+    const inv = await this.prisma.invoice.findFirst({
+      where: { id: invoiceId, company: { userId } },
+    });
+    if (!inv) throw new NotFoundException('Invoice not found');
+    if (!inv.xmlPath) throw new BadRequestException('No XML to validate');
+    const xmlAbs = resolveStoredToAbs(inv.xmlPath);
+    if (!xmlAbs || !fs.existsSync(xmlAbs)) throw new NotFoundException('XML not found on disk');
+    const res = await this.validator.validateFile(xmlAbs);
+    return res;
   }
 
   async listLogs(userId: string, invoiceId: string) {
