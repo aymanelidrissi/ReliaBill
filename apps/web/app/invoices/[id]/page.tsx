@@ -63,7 +63,7 @@ export default function InvoiceDetailPage() {
     }
   }
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { load(); }, []);
 
   async function call(path: string, method = 'POST') {
     const r = await fetch(`/rb/invoices/${id}/${path}`, {
@@ -130,7 +130,7 @@ export default function InvoiceDetailPage() {
 
   const canPrepare = inv.status === 'DRAFT' || inv.status === 'FAILED' || !inv.xmlPath || !inv.pdfPath;
   const canSend = inv.status === 'READY';
-  const canRefresh = !!inv.hermesMessageId;
+  const canRefresh = inv.status === 'SENT';
 
   return (
     <div className="max-w-5xl mx-auto p-6 space-y-8">

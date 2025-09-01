@@ -16,6 +16,11 @@ const xmlEscape = (s: string) =>
 
 const fmtDate = (d: string | Date) => (d instanceof Date ? d : new Date(d)).toISOString().slice(0, 10);
 
+function normIsoCountry(raw?: string | null): string {
+  const v = (raw ?? '').trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(v) ? v : 'BE';
+}
+
 function normParty(
   p: any,
   fallbackName: string
@@ -26,7 +31,7 @@ function normParty(
     street: p?.street ?? null,
     city: p?.city ?? null,
     postalCode: p?.postalCode ?? null,
-    countryCode: p?.country || p?.countryCode || 'BE',
+    countryCode: normIsoCountry(p?.country || p?.countryCode),
     email: p?.email ?? null,
     iban: p?.iban ?? null,
     bic: p?.bic ?? null,
@@ -79,7 +84,7 @@ function toModel(input: { invoice: any; company: any; client: any }): InvoiceDoc
     number: inv.number || '0001',
     issueDate: fmtDate(inv.issueDate || new Date()),
     dueDate: fmtDate(inv.dueDate || new Date()),
-    currency: inv.currency || 'EUR',
+    currency: (inv.currency || 'EUR').toString().toUpperCase(),
     supplier,
     customer,
     lines,
@@ -98,7 +103,6 @@ function normalizeEas(input: { scheme?: string; id?: string }) {
   if (/^\d{4}$/.test(rawScheme)) {
     return { scheme: rawScheme, id: rawId.replace(/^\d{4}:/, '') };
   }
-  // Unknown/blank scheme: leave out
   return { scheme: '', id: rawId.replace(/^\d{4}:/, '') };
 }
 

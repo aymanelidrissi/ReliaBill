@@ -1,4 +1,4 @@
-import { IsEmail, IsIn, IsOptional, IsString } from 'class-validator';
+import { IsEmail, IsIn, IsOptional, IsString, IsISO31661Alpha2 } from 'class-validator';
 
 export class CreateClientDto {
   @IsString()
@@ -24,7 +24,7 @@ export class CreateClientDto {
   @IsOptional()
   postalCode?: string;
 
-  @IsString()
+  @IsISO31661Alpha2()
   @IsOptional()
   country?: string;
 
