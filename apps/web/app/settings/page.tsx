@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -23,18 +24,31 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="max-w-xl space-y-6">
+    <div className="max-w-xl space-y-8">
       <h1 className="text-2xl font-semibold">Settings</h1>
-      <div className="space-y-2">
+
+      <section className="space-y-2">
         <Label htmlFor="base">API Base</Label>
         <Input id="base" value={base} onChange={(e) => setBaseState(e.target.value)} placeholder="/rb" />
-      </div>
-      <div className="space-y-2">
+        <p className="text-sm text-muted-foreground">Default base is /rb which proxies to http://localhost:3333.</p>
+      </section>
+
+      <section className="space-y-2">
         <Label htmlFor="token">API Token</Label>
         <Input id="token" value={token} onChange={(e) => setTokenState(e.target.value)} placeholder="Bearer token" />
-      </div>
+      </section>
+
       <Button onClick={save}>Save</Button>
-      <p className="text-sm text-muted-foreground">Default base is /rb which proxies to http://localhost:3333.</p>
+
+      <section className="space-y-2 pt-4 border-t">
+        <h2 className="text-xl font-semibold">Company</h2>
+        <p className="text-sm text-muted-foreground">
+          Set your legal details (name, VAT, IBAN, address). These appear on invoices and are required for PEPPOL.
+        </p>
+        <Link href="/settings/company" className="inline-flex">
+          <Button variant="outline">Open Company Setup</Button>
+        </Link>
+      </section>
     </div>
   );
 }
