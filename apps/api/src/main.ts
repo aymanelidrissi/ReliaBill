@@ -54,6 +54,7 @@ async function bootstrap() {
         url.startsWith('/auth/login') ||
         url.startsWith('/auth/register') ||
         url.startsWith('/auth/register-dev');
+        url.startsWith('/auth/logout'); 
 
       if (!unsafe || skip) return next();
 
